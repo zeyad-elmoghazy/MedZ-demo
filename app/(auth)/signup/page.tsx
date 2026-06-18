@@ -1,0 +1,366 @@
+'use client';
+
+import { useState } from 'react';
+import Link from 'next/link';
+import { useRouter } from 'next/navigation';
+import { motion } from 'framer-motion';
+import {
+  ArrowRight,
+  ChevronDown,
+  GraduationCap,
+  Loader2,
+  Lock,
+  Mail,
+  Microscope,
+  User,
+} from 'lucide-react';
+import {
+  createBrowserClient,
+  dashboardPathForRole,
+  isDemoMode,
+  writeDemoProfile,
+} from '@/lib/supabase';
+
+type SelectableRole = 'student' | 'professor';
+
+export default function SignupPage() {
+  const router = useRouter();
+  const supabase = createBrowserClient();
+
+  const [fullName, setFullName] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [role, setRole] = useState<SelectableRole>('student');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+
+    if (password.length < 8) {
+      setError('Password must be at least 8 characters.');
+      return;
+    }
+
+    setLoading(true);
+
+    if (isDemoMode()) {
+      writeDemoProfile({
+        id: `demo-${Date.now()}`,
+        full_name: fullName,
+        email,
+        role,
+      });
+      router.push(dashboardPathForRole(role));
+      router.refresh();
+      return;
+    }
+
+    const { data, error: signUpError } = await supabase.auth.signUp({
+      email,
+      password,
+      options: {
+        data: { full_name: fullName, role },
+      },
+    });
+
+    if (signUpError || !data.user) {
+      setLoading(false);
+      setError(signUpError?.message ?? 'Unable to create account.');
+      return;
+    }
+
+    const insertResult = await (
+      supabase as unknown as {
+        from: (t: string) => {
+          insert: (row: Record<string, unknown>) => Promise<{
+            error: { message: string } | null;
+          }>;
+        };
+      }
+    )
+      .from('profiles')
+      .insert({
+        id: data.user.id,
+        full_name: fullName,
+        email,
+        role,
+      });
+    const profileError = insertResult.error;
+
+    if (profileError) {
+      setLoading(false);
+      setError(`Account created, but profile failed: ${profileError.message}`);
+      return;
+    }
+
+    if (!data.session) {
+      const { error: signInError } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
+      if (signInError) {
+        setLoading(false);
+        setError('Account created. Please confirm your email, then log in.');
+        return;
+      }
+    }
+
+    router.push(dashboardPathForRole(role));
+    router.refresh();
+  }
+
+  return (
+    <main className="relative flex min-h-screen w-full items-center justify-center px-4 py-16">
+      <div aria-hidden className="pointer-events-none absolute inset-0 -z-10">
+        <div className="absolute left-1/2 top-1/3 h-[520px] w-[520px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-violet-500/15 blur-[120px]" />
+        <div className="absolute bottom-10 left-10 h-72 w-72 rounded-full bg-emerald-500/10 blur-[100px]" />
+      </div>
+
+      <motion.div
+        initial={{ opacity: 0, y: 16, scale: 0.98 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        transition={{ duration: 0.45, ease: 'easeOut' }}
+        style={{
+          backgroundColor: '#0F0F1A',
+          border: '1px solid #1E1E2E',
+          padding: '40px',
+        }}
+        className="w-full max-w-md rounded-2xl shadow-[0_40px_120px_-30px_rgba(124,58,237,0.4)]"
+      >
+        <Link
+          href="/"
+          className="mx-auto flex w-fit flex-col items-center gap-1.5"
+        >
+          <span
+            className="text-2xl font-bold tracking-tight text-white"
+            style={{ textShadow: '0 0 20px rgba(124,58,237,0.7)' }}
+          >
+            MedZ
+          </span>
+          <span className="text-[10px] uppercase tracking-[0.28em] text-text-muted">
+            Adaptive learning
+          </span>
+        </Link>
+
+        <div className="mt-8 text-center">
+          <h1 className="text-2xl font-semibold tracking-tight text-text-primary">
+            Create your account
+          </h1>
+          <p className="mt-1.5 text-sm text-text-muted">
+            Pick a role to set up your workspace.
+          </p>
+          {isDemoMode() && (
+            <p
+              className="mx-auto mt-3 inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] uppercase tracking-[0.18em] text-violet-200"
+              style={{
+                backgroundColor: 'rgba(124,58,237,0.15)',
+                border: '1px solid rgba(159,103,255,0.35)',
+              }}
+            >
+              Demo mode · no real account required
+            </p>
+          )}
+        </div>
+
+        <form onSubmit={handleSubmit} className="mt-8 space-y-5">
+          <FormField
+            id="fullName"
+            label="Full name"
+            icon={<User className="h-4 w-4" />}
+            type="text"
+            autoComplete="name"
+            placeholder="Yusuf Khalil"
+            value={fullName}
+            onChange={setFullName}
+          />
+
+          <FormField
+            id="email"
+            label="Email"
+            icon={<Mail className="h-4 w-4" />}
+            type="email"
+            autoComplete="email"
+            placeholder="you@university.edu"
+            value={email}
+            onChange={setEmail}
+          />
+
+          <FormField
+            id="password"
+            label="Password"
+            icon={<Lock className="h-4 w-4" />}
+            type="password"
+            autoComplete="new-password"
+            placeholder="Minimum 8 characters"
+            value={password}
+            onChange={setPassword}
+            minLength={8}
+          />
+
+          <div className="space-y-1.5">
+            <label
+              htmlFor="role"
+              className="text-xs font-medium uppercase tracking-[0.16em] text-text-muted"
+            >
+              Role
+            </label>
+            <div className="grid grid-cols-2 gap-2">
+              <RoleOption
+                active={role === 'student'}
+                onSelect={() => setRole('student')}
+                icon={<GraduationCap className="h-4 w-4" />}
+                label="Student"
+                hint="Practice MCQs & track streaks"
+              />
+              <RoleOption
+                active={role === 'professor'}
+                onSelect={() => setRole('professor')}
+                icon={<Microscope className="h-4 w-4" />}
+                label="Professor"
+                hint="Author MCQs & view cohorts"
+              />
+            </div>
+            <p className="mt-2 text-[11px] text-text-muted/80">
+              Administrator accounts are provisioned manually by MedZ ops.
+            </p>
+          </div>
+
+          {error && (
+            <motion.p
+              initial={{ opacity: 0, y: -4 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="rounded-lg border border-error/30 bg-error/10 px-3 py-2 text-xs text-error"
+            >
+              {error}
+            </motion.p>
+          )}
+
+          <button
+            type="submit"
+            disabled={loading}
+            className="group inline-flex h-11 w-full items-center justify-center gap-2 rounded-lg bg-violet-600 px-6 text-sm font-semibold text-white shadow-[0_0_24px_rgba(124,58,237,0.45)] transition hover:bg-violet-500 hover:shadow-[0_0_36px_rgba(124,58,237,0.6)] focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-400 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0F0F1A] disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {loading ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <>
+                Create account
+                <ArrowRight className="h-4 w-4 transition group-hover:translate-x-0.5" />
+              </>
+            )}
+          </button>
+        </form>
+
+        <p className="mt-8 text-center text-sm text-text-muted">
+          Already have an account?{' '}
+          <Link
+            href="/login"
+            className="font-medium text-violet-300 underline-offset-2 transition hover:text-violet-200 hover:underline"
+          >
+            Log In
+          </Link>
+        </p>
+      </motion.div>
+    </main>
+  );
+}
+
+function FormField({
+  id,
+  label,
+  icon,
+  type,
+  autoComplete,
+  placeholder,
+  value,
+  onChange,
+  minLength,
+}: {
+  id: string;
+  label: string;
+  icon: React.ReactNode;
+  type: string;
+  autoComplete: string;
+  placeholder: string;
+  value: string;
+  onChange: (v: string) => void;
+  minLength?: number;
+}) {
+  return (
+    <div className="space-y-1.5">
+      <label
+        htmlFor={id}
+        className="text-xs font-medium uppercase tracking-[0.16em] text-text-muted"
+      >
+        {label}
+      </label>
+      <div className="relative">
+        <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-muted">
+          {icon}
+        </span>
+        <input
+          id={id}
+          type={type}
+          autoComplete={autoComplete}
+          required
+          minLength={minLength}
+          placeholder={placeholder}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          className="block h-11 w-full rounded-lg border border-[#1E1E2E] bg-[#0A0A12] pl-10 pr-4 text-sm text-text-primary placeholder:text-text-muted/60 transition focus:border-violet-500 focus:outline-none focus:ring-2 focus:ring-violet-500/40"
+        />
+      </div>
+    </div>
+  );
+}
+
+function RoleOption({
+  active,
+  onSelect,
+  icon,
+  label,
+  hint,
+}: {
+  active: boolean;
+  onSelect: () => void;
+  icon: React.ReactNode;
+  label: string;
+  hint: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      aria-pressed={active}
+      className={[
+        'group flex flex-col gap-1 rounded-lg border px-3 py-3 text-left transition focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-400/60',
+        active
+          ? 'border-violet-500 bg-violet-500/10 shadow-[0_0_18px_rgba(124,58,237,0.35)]'
+          : 'border-[#1E1E2E] bg-[#0A0A12] hover:border-violet-500/40 hover:bg-violet-500/5',
+      ].join(' ')}
+    >
+      <span
+        className={[
+          'flex items-center gap-2 text-sm font-semibold',
+          active ? 'text-white' : 'text-text-primary',
+        ].join(' ')}
+      >
+        <span
+          className={[
+            'grid h-6 w-6 place-items-center rounded-md transition',
+            active ? 'bg-violet-500 text-white' : 'bg-white/5 text-text-muted group-hover:text-white',
+          ].join(' ')}
+        >
+          {icon}
+        </span>
+        {label}
+      </span>
+      <span className="text-[11px] text-text-muted">{hint}</span>
+      {active && (
+        <ChevronDown className="absolute right-2 top-2 hidden h-3 w-3 text-violet-300" />
+      )}
+    </button>
+  );
+}
