@@ -16,17 +16,22 @@ import type { Ratelimit } from '@upstash/ratelimit';
 export async function applyRateLimit(
   request: NextRequest,
   limiter: Ratelimit | null,
-  identifier?: string // if not provided, uses IP
+  identifier?: string // if not provided, uses cookie/IP fallback
 ): Promise<NextResponse | null> {
   // Limiter not configured — proceed.
   if (!limiter) return null;
 
-  // Use user ID if provided, else fall back to IP.
-  // IP-based limiting is the last line of defense — every
-  // authenticated route should pass a user ID so a shared IP
-  // (university lab, corporate NAT) doesn't get one student
-  // throttled by another.
-  const id = identifier || getClientIp(request) || 'anonymous';
+  // Identifier resolution order:
+  //   1. Explicit user id passed by the caller (post-auth).
+  //   2. Hashed Supabase auth cookie (per-session, no supabase-js
+  //      needed) — keeps university NATs from starving each other.
+  //   3. Raw IP — last-resort for genuinely anonymous requests
+  //      (e.g. /api/auth/login before there's a session cookie).
+  const id =
+    identifier ||
+    (await sessionIdentifier(request)) ||
+    getClientIp(request) ||
+    'anonymous';
 
   const { success, limit, remaining, reset } = await limiter.limit(id);
 
@@ -67,4 +72,29 @@ function getClientIp(request: NextRequest): string | null {
     if (first) return first;
   }
   return request.headers.get('x-real-ip');
+}
+
+/**
+ * Derive a per-session identifier from the Supabase auth cookie.
+ *
+ * We SHA-256 the cookie so a Redis breach can't be replayed as a
+ * session token. Taking the first 8 bytes (16 hex chars) is plenty
+ * of entropy for uniqueness across any realistic user base.
+ *
+ * Returns null when there's no auth cookie — the caller then falls
+ * back to IP.
+ */
+async function sessionIdentifier(request: NextRequest): Promise<string | null> {
+  const authCookie = request.cookies.getAll().find((c) =>
+    /^sb-.+-auth-token(\.\d+)?$/.test(c.name)
+  );
+  if (!authCookie?.value) return null;
+
+  const bytes = new TextEncoder().encode(authCookie.value);
+  const hash = await crypto.subtle.digest('SHA-256', bytes);
+  const hex = Array.from(new Uint8Array(hash))
+    .slice(0, 8)
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+  return `u:${hex}`;
 }
