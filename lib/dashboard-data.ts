@@ -1,9 +1,8 @@
 /**
  * Student dashboard data layer.
  *
- * Types + mock data shaped exactly how the UI consumes it. When
- * the real API is wired in, swap `getMockStudentStats()` for a
- * Supabase fetch; the components don't need to change.
+ * Types + a single subject catalog constant. Live per-student
+ * numbers come from `/api/student/stats`, which reads Supabase.
  */
 
 export type Subject = {
@@ -46,6 +45,13 @@ export type StudentStats = {
   progressHistory: ProgressDataPoint[];
 };
 
+// Static catalog of subjects (icon, palette, availability). The
+// numeric fields — progress, accuracy, questionsAnswered,
+// correctAnswers, challengesCompleted — are the *empty defaults*
+// and get overwritten with the caller's real numbers by
+// /api/student/stats. Do NOT put mock values here; a real
+// student who has never attempted a subject should see zeros,
+// not someone else's leftover demo score.
 export const SUBJECTS_CONFIG: Subject[] = [
   {
     id: 'histology',
@@ -54,11 +60,11 @@ export const SUBJECTS_CONFIG: Subject[] = [
     color: '#7C3AED',
     colorBg: 'bg-purple-500/10',
     available: true,
-    progress: 78,
-    accuracy: 78,
-    questionsAnswered: 11,
-    correctAnswers: 9,
-    challengesCompleted: 3,
+    progress: 0,
+    accuracy: 0,
+    questionsAnswered: 0,
+    correctAnswers: 0,
+    challengesCompleted: 0,
   },
   {
     id: 'anatomy',
@@ -139,71 +145,8 @@ export function getEmptyStudentStats(): StudentStats {
     overallAccuracy: 0,
     streakDays: 0,
     lastActiveDate: new Date().toISOString(),
-    subjects: SUBJECTS_CONFIG.map((s) => ({
-      ...s,
-      progress: 0,
-      accuracy: 0,
-      questionsAnswered: 0,
-      correctAnswers: 0,
-      challengesCompleted: 0,
-    })),
+    subjects: SUBJECTS_CONFIG,
     recentChallenges: [],
     progressHistory: [],
-  };
-}
-
-export function getMockStudentStats(): StudentStats {
-  // 8 historical progress data points spanning the last 5 weeks,
-  // final point lands on 77.5 to match the design screenshot.
-  const progressHistory: ProgressDataPoint[] = [
-    { date: 'May 14', accuracy: 45 },
-    { date: 'May 17', accuracy: 52 },
-    { date: 'May 21', accuracy: 48 },
-    { date: 'May 24', accuracy: 61 },
-    { date: 'May 28', accuracy: 58 },
-    { date: 'Jun 1',  accuracy: 70 },
-    { date: 'Jun 4',  accuracy: 74 },
-    { date: 'Jun 11', accuracy: 77.5 },
-  ];
-
-  const recentChallenges: ChallengeResult[] = [
-    {
-      id: '1',
-      subjectId: 'histology',
-      subjectName: 'Histology',
-      score: 9,
-      total: 11,
-      accuracy: 81.8,
-      completedAt: new Date(Date.now() - 86400000).toISOString(),
-    },
-    {
-      id: '2',
-      subjectId: 'histology',
-      subjectName: 'Histology',
-      score: 8,
-      total: 11,
-      accuracy: 72.7,
-      completedAt: new Date(Date.now() - 172800000).toISOString(),
-    },
-    {
-      id: '3',
-      subjectId: 'histology',
-      subjectName: 'Histology',
-      score: 7,
-      total: 11,
-      accuracy: 63.6,
-      completedAt: new Date(Date.now() - 345600000).toISOString(),
-    },
-  ];
-
-  return {
-    totalQuestionsAnswered: 320,
-    totalCorrectAnswers: 248,
-    overallAccuracy: 77.5,
-    streakDays: 12,
-    lastActiveDate: new Date().toISOString(),
-    subjects: SUBJECTS_CONFIG,
-    recentChallenges,
-    progressHistory,
   };
 }

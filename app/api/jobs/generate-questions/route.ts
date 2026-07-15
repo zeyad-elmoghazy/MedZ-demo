@@ -1,8 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { verifySignatureAppRouter } from '@upstash/qstash/nextjs';
 import { createClient } from '@supabase/supabase-js';
-import { invalidateCache } from '@/lib/cache';
-import { CACHE_KEYS } from '@/lib/redis';
 import type { Database } from '@/lib/supabase';
 
 export const runtime = 'nodejs';
@@ -67,40 +65,22 @@ async function handler(request: NextRequest): Promise<NextResponse> {
     .eq('id', payload.jobId);
 
   try {
-    // --- Real AI work would go here ---
+    // AI extraction pipeline is not wired yet. Fail the job with
+    // a clear message so the professor sees a truthful state on
+    // the polling endpoint instead of fake success numbers.
     //
+    // When implementing, replace this block with:
     //   const notes = await downloadFile(payload.notesFileUrl);
     //   const questions = await downloadFile(payload.questionsFileUrl);
     //   const extracted = await runExtractionPipeline({ notes, questions });
     //   await supabase.from('questions').insert(extracted.published);
-    //
-    // For the demo we just sleep 3s and return canned numbers
-    // so the dashboard pipeline animates against a realistic
-    // latency profile.
-    await sleep(3000);
-
-    const result = {
-      extracted: 450,
-      published: 438,
-      review: 12,
-      subjectId: payload.subjectId,
-    };
-
-    await supabase
-      .from('jobs')
-      .update({
-        status: 'completed',
-        result,
-        completed_at: new Date().toISOString(),
-      })
-      .eq('id', payload.jobId);
-
-    // The professor's content overview reads from the question
-    // bank — drop the cache so the new revision shows up on the
-    // next read instead of waiting for the 24h TTL.
-    await invalidateCache(CACHE_KEYS.questionBank(payload.subjectId));
-
-    return NextResponse.json({ ok: true, jobId: payload.jobId });
+    //   const result = { extracted: extracted.count, published: ..., review: ... };
+    //   await supabase.from('jobs').update({ status: 'completed', result, completed_at: ... }).eq('id', payload.jobId);
+    //   await invalidateCache(CACHE_KEYS.questionBank(payload.subjectId));
+    //   return NextResponse.json({ ok: true, jobId: payload.jobId });
+    throw new Error(
+      'AI question generation is not yet implemented. Wire an extraction pipeline in app/api/jobs/generate-questions/route.ts before enabling professor uploads.'
+    );
   } catch (err) {
     const message = err instanceof Error ? err.message : 'job failed';
     await supabase
@@ -130,18 +110,28 @@ function serviceClient() {
   });
 }
 
-function sleep(ms: number) {
-  return new Promise<void>((resolve) => setTimeout(resolve, ms));
+/**
+ * Export the verified handler.
+ *
+ * Signature verification is MANDATORY except in explicit demo mode
+ * (NEXT_PUBLIC_DEMO=1) or non-production Node envs. Prod without a
+ * signing key is a misconfiguration, not a dev convenience — the
+ * previous behavior silently accepted any POST, which is exactly
+ * how an internal endpoint gets weaponized.
+ */
+function buildPost() {
+  const hasSigningKey = Boolean(process.env.QSTASH_CURRENT_SIGNING_KEY);
+  if (hasSigningKey) return verifySignatureAppRouter(handler);
+
+  const isDemo = process.env.NEXT_PUBLIC_DEMO === '1';
+  const isProd = process.env.NODE_ENV === 'production';
+  if (isProd && !isDemo) {
+    throw new Error(
+      'QSTASH_CURRENT_SIGNING_KEY is required in production. ' +
+        'Set it in the deployment env, or set NEXT_PUBLIC_DEMO=1 for a demo build.'
+    );
+  }
+  return handler;
 }
 
-/**
- * Export the verified handler. If signing keys aren't configured
- * (local dev without QStash), we skip verification so the
- * endpoint can still be invoked manually — never do this in
- * production. A missing key means the env isn't set, which
- * already implies "not production".
- */
-export const POST =
-  process.env.QSTASH_CURRENT_SIGNING_KEY
-    ? verifySignatureAppRouter(handler)
-    : handler;
+export const POST = buildPost();

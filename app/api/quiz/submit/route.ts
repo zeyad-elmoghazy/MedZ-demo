@@ -3,9 +3,9 @@ import { cookies } from 'next/headers';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { createClient } from '@supabase/supabase-js';
 import { z } from 'zod';
-import type { Database, UserRole } from '@/lib/supabase';
+import { isDemoMode, type Database, type UserRole } from '@/lib/supabase';
 import { SUBJECTS_CONFIG } from '@/lib/dashboard-data';
-import { histologyQuestions, type HistologyQuestion } from '@/data/histology-questions';
+import { histologyQuestions, type HistologyQuestion, type Choice } from '@/data/histology-questions';
 import { applyRateLimit } from '@/lib/apply-rate-limit';
 import { quizLimiter } from '@/lib/rate-limit';
 import { invalidateCache } from '@/lib/cache';
@@ -91,8 +91,11 @@ export async function POST(request: NextRequest) {
   }
   const { subjectId, answers, startedAt } = parsed.data;
 
-  // 4) Score server-side from the canonical bank.
-  const questions = getQuestionsForSubject(subjectId);
+  // 4) Score server-side from the canonical bank (Supabase in
+  // real mode, bundled TS module in demo mode). Answers keys must
+  // match the ids we send from /api/questions/[subjectId], which
+  // is why both endpoints share the subject_bundle_id namespace.
+  const questions = await getQuestionsForSubject(subjectId);
   if (questions.length === 0) {
     return NextResponse.json(
       { error: `Subject "${subjectId}" has no published questions yet.` },
@@ -209,13 +212,62 @@ type ServiceClient = {
 };
 
 // ============== Helpers ==============
-function getQuestionsForSubject(subjectId: string): HistologyQuestion[] {
-  switch (subjectId) {
-    case 'histology':
-      return histologyQuestions;
-    default:
-      return [];
+type QuestionRow = {
+  subject_bundle_id: number;
+  question: string;
+  choices: Choice[];
+  correct_answer: string;
+  explanation: string;
+  choice_rationales: Record<string, string> | null;
+  reference: string;
+  topic: string;
+};
+
+async function getQuestionsForSubject(subjectId: string): Promise<HistologyQuestion[]> {
+  if (isDemoMode()) {
+    return subjectId === 'histology' ? histologyQuestions : [];
   }
+
+  // Fetch the canonical bank with the service-role client so the
+  // scoring path stays authoritative even if RLS is retightened
+  // later (the SELECT policy on `questions` currently permits any
+  // authenticated user, but making scoring depend on that would
+  // couple two independent things).
+  const service = serviceRoleClient() as unknown as {
+    from: (table: string) => {
+      select: (cols: string) => {
+        eq: (col: string, val: unknown) => {
+          order: (
+            col: string,
+            opts: { ascending: boolean }
+          ) => Promise<{ data: QuestionRow[] | null; error: { message: string } | null }>;
+        };
+      };
+    };
+  };
+
+  const { data, error } = await service
+    .from('questions')
+    .select(
+      'subject_bundle_id, question, choices, correct_answer, explanation, choice_rationales, reference, topic'
+    )
+    .eq('subject_id', subjectId)
+    .order('subject_bundle_id', { ascending: true });
+
+  if (error) throw new Error(error.message);
+
+  return (data ?? []).map(
+    (r): HistologyQuestion => ({
+      id: r.subject_bundle_id,
+      question: r.question,
+      choices: r.choices,
+      correctAnswer: r.correct_answer,
+      explanation: r.explanation,
+      choiceRationales: r.choice_rationales ?? undefined,
+      reference: r.reference,
+      topic: r.topic,
+    })
+  );
 }
 
 function serviceRoleClient() {

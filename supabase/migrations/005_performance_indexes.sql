@@ -1,12 +1,20 @@
 -- =============================================
--- MedZ · 002_performance_indexes.sql
+-- MedZ · 005_performance_indexes.sql
 -- =============================================
 -- Production-scale tuning for the MedZ Supabase project.
--- Run AFTER 001_initial_schema.sql (profiles, quiz_sessions,
--- bookmarks, notes, violations). All index creation uses
--- CONCURRENTLY so it can be applied to a live DB without
--- blocking writers — run each statement outside a transaction
--- block (Supabase SQL editor: uncheck "Run in transaction").
+-- Runs LAST so every table it indexes has been created:
+--   001 → 003 → 004 → 005.
+--
+-- Indexes here are plain (not CONCURRENTLY). CONCURRENTLY is
+-- valuable on a live table (avoids locking writers) but forbidden
+-- inside a transaction/pipeline, and the Supabase CLI applies
+-- each migration file inside an implicit pipeline. On a fresh
+-- database with no rows there are no writers to protect, so
+-- plain CREATE INDEX is correct.
+--
+-- If you later add indexes to a table with live traffic, put
+-- them in a NEW migration and apply them via the SQL editor
+-- with "Run in transaction" UNCHECKED so CONCURRENTLY is legal.
 --
 -- ---------------------------------------------------------------
 -- Scale targets (read this before tuning further)
@@ -63,44 +71,44 @@
 -- INDEXES FOR ALL HIGH-TRAFFIC QUERIES
 -- =============================================
 
--- profiles: most queried by auth.uid() and role
-CREATE INDEX CONCURRENTLY idx_profiles_id
-  ON profiles(id);
-CREATE INDEX CONCURRENTLY idx_profiles_role
+-- profiles: most queried by auth.uid() and role.
+-- Postgres auto-creates a unique btree on the PK (id), so no
+-- explicit idx_profiles_id is needed.
+CREATE INDEX IF NOT EXISTS idx_profiles_role
   ON profiles(role);
-CREATE INDEX CONCURRENTLY idx_profiles_email
+CREATE INDEX IF NOT EXISTS idx_profiles_email
   ON profiles(email);
 
 -- quiz_sessions: students query their own history
 -- frequently, and admins filter by subject
-CREATE INDEX CONCURRENTLY idx_quiz_sessions_student
+CREATE INDEX IF NOT EXISTS idx_quiz_sessions_student
   ON quiz_sessions(student_id);
-CREATE INDEX CONCURRENTLY idx_quiz_sessions_subject
+CREATE INDEX IF NOT EXISTS idx_quiz_sessions_subject
   ON quiz_sessions(subject_id);
-CREATE INDEX CONCURRENTLY idx_quiz_sessions_completed
+CREATE INDEX IF NOT EXISTS idx_quiz_sessions_completed
   ON quiz_sessions(completed_at DESC);
 
 -- Composite index for the most common query:
 -- "get this student's sessions for this subject"
-CREATE INDEX CONCURRENTLY idx_quiz_sessions_student_subject
+CREATE INDEX IF NOT EXISTS idx_quiz_sessions_student_subject
   ON quiz_sessions(student_id, subject_id);
 
 -- bookmarks: student retrieves all their bookmarks
-CREATE INDEX CONCURRENTLY idx_bookmarks_student
+CREATE INDEX IF NOT EXISTS idx_bookmarks_student
   ON bookmarks(student_id);
-CREATE INDEX CONCURRENTLY idx_bookmarks_question
+CREATE INDEX IF NOT EXISTS idx_bookmarks_question
   ON bookmarks(student_id, question_id);
 
 -- notes: same pattern as bookmarks
-CREATE INDEX CONCURRENTLY idx_notes_student
+CREATE INDEX IF NOT EXISTS idx_notes_student
   ON notes(student_id);
-CREATE INDEX CONCURRENTLY idx_notes_question
+CREATE INDEX IF NOT EXISTS idx_notes_question
   ON notes(student_id, question_id);
 
 -- violations: admin queries by student and time
-CREATE INDEX CONCURRENTLY idx_violations_student
+CREATE INDEX IF NOT EXISTS idx_violations_student
   ON violations(student_id);
-CREATE INDEX CONCURRENTLY idx_violations_time
+CREATE INDEX IF NOT EXISTS idx_violations_time
   ON violations(occurred_at DESC);
 
 
@@ -125,11 +133,12 @@ GROUP BY student_id, subject_id;
 -- Required for REFRESH MATERIALIZED VIEW CONCURRENTLY
 CREATE UNIQUE INDEX ON student_analytics(student_id, subject_id);
 
--- Refresh this view every hour via a Supabase
--- scheduled function (pg_cron):
---
--- Enable the extension once per project:
---   CREATE EXTENSION IF NOT EXISTS pg_cron;
+-- Refresh this view every hour via pg_cron. Enable the extension
+-- here so the schedule call below succeeds without a manual
+-- Dashboard toggle. Supabase permits CREATE EXTENSION pg_cron on
+-- the default database.
+CREATE EXTENSION IF NOT EXISTS pg_cron;
+
 SELECT cron.schedule(
   'refresh-analytics',
   '0 * * * *',

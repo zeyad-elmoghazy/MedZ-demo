@@ -3,8 +3,8 @@ import { cookies } from 'next/headers';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { withCache } from '@/lib/cache';
 import { CACHE_KEYS, TTL } from '@/lib/redis';
-import { histologyQuestions, type HistologyQuestion } from '@/data/histology-questions';
-import type { Database } from '@/lib/supabase';
+import { histologyQuestions, type HistologyQuestion, type Choice } from '@/data/histology-questions';
+import { isDemoMode, type Database } from '@/lib/supabase';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -59,25 +59,68 @@ export async function GET(
 }
 
 /**
- * Read questions from the source of truth.
+ * Read questions from the source of truth (Supabase `questions`
+ * table). In demo mode (NEXT_PUBLIC_DEMO=1) we fall back to the
+ * bundled histology module so the UI still works without a
+ * provisioned Supabase project.
  *
- * In production this would hit Supabase:
- *
- *   const { data, error } = await supabase
- *     .from('questions')
- *     .select('id, question, choices, correct_answer, explanation, reference, topic, choice_rationales')
- *     .eq('subject_id', subjectId)
- *     .order('id', { ascending: true });
- *
- *   if (error) throw error;
- *   return data ?? [];
- *
- * For this demo the histology bank is bundled as a static module,
- * so we serve it directly. Coming-soon subjects return [].
+ * The response shape matches HistologyQuestion so the client and
+ * the scoring path in /api/quiz/submit don't need to fork.
  */
+type QuestionRow = {
+  subject_bundle_id: number;
+  question: string;
+  choices: Choice[];
+  correct_answer: string;
+  explanation: string;
+  choice_rationales: Record<string, string> | null;
+  reference: string;
+  topic: string;
+};
+
 async function fetchQuestionsFromDB(subjectId: string): Promise<HistologyQuestion[]> {
-  if (subjectId === 'histology') {
-    return histologyQuestions;
+  if (isDemoMode()) {
+    return subjectId === 'histology' ? histologyQuestions : [];
   }
-  return [];
+
+  const supabase = createRouteHandlerClient<Database>({ cookies });
+
+  // auth-helpers-nextjs@0.8 collapses the Database generic to
+  // `never` for chained builders; the shape below is the exact
+  // surface this query needs.
+  const client = supabase as unknown as {
+    from: (table: string) => {
+      select: (cols: string) => {
+        eq: (col: string, val: unknown) => {
+          order: (
+            col: string,
+            opts: { ascending: boolean }
+          ) => Promise<{ data: QuestionRow[] | null; error: { message: string } | null }>;
+        };
+      };
+    };
+  };
+
+  const { data, error } = await client
+    .from('questions')
+    .select(
+      'subject_bundle_id, question, choices, correct_answer, explanation, choice_rationales, reference, topic'
+    )
+    .eq('subject_id', subjectId)
+    .order('subject_bundle_id', { ascending: true });
+
+  if (error) throw new Error(error.message);
+
+  return (data ?? []).map(
+    (r): HistologyQuestion => ({
+      id: r.subject_bundle_id,
+      question: r.question,
+      choices: r.choices,
+      correctAnswer: r.correct_answer,
+      explanation: r.explanation,
+      choiceRationales: r.choice_rationales ?? undefined,
+      reference: r.reference,
+      topic: r.topic,
+    })
+  );
 }
