@@ -88,36 +88,40 @@ export async function GET() {
     return NextResponse.json({ students: [] });
   }
 
-  // 2) Per-subject aggregates for every student in one query.
   const studentIds = students.map((s) => s.id);
-  const { data: subjectStatsData, error: subjectStatsError } = await service
-    .from('student_subject_stats')
-    .select(
-      'student_id, subject_id, total_sessions, total_correct, total_answered, avg_accuracy, last_attempted'
-    )
-    .in('student_id', studentIds);
 
-  if (subjectStatsError) {
+  // 2 + 3 in parallel. The subject-stats scan and the N streak RPCs
+  // are independent — running them concurrently cuts wall time to
+  // max(scan, streaks) instead of scan + streaks. Under Postgres
+  // this trades a bit of connection-pool contention for latency.
+  const [subjectStatsResult, streakResults] = await Promise.all([
+    service
+      .from('student_subject_stats')
+      .select(
+        'student_id, subject_id, total_sessions, total_correct, total_answered, avg_accuracy, last_attempted'
+      )
+      .in('student_id', studentIds),
+    Promise.all(
+      studentIds.map((id) =>
+        (service as unknown as {
+          rpc: (name: string, args: Record<string, unknown>) =>
+            Promise<{ data: number | null; error: { message: string } | null }>;
+        })
+          .rpc('get_student_streak', { p_student_id: id })
+          .then((r) => (typeof r.data === 'number' ? r.data : Number(r.data ?? 0)))
+          .catch(() => 0)
+      )
+    ),
+  ]);
+
+  if (subjectStatsResult.error) {
     return NextResponse.json(
-      { error: subjectStatsError.message },
+      { error: subjectStatsResult.error.message },
       { status: 500 }
     );
   }
 
-  const subjectStats = (subjectStatsData ?? []) as SubjectStatRow[];
-
-  // 3) Streaks in parallel.
-  const streakResults = await Promise.all(
-    studentIds.map((id) =>
-      (service as unknown as {
-        rpc: (name: string, args: Record<string, unknown>) =>
-          Promise<{ data: number | null; error: { message: string } | null }>;
-      })
-        .rpc('get_student_streak', { p_student_id: id })
-        .then((r) => (typeof r.data === 'number' ? r.data : Number(r.data ?? 0)))
-        .catch(() => 0)
-    )
-  );
+  const subjectStats = (subjectStatsResult.data ?? []) as SubjectStatRow[];
 
   const records: StudentRecord[] = students.map((p, idx) => {
     const studentSubjects = subjectStats.filter((s) => s.student_id === p.id);

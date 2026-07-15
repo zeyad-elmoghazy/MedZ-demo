@@ -3,7 +3,6 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { motion } from 'framer-motion';
 import {
   ArrowRight,
   ChevronDown,
@@ -15,17 +14,15 @@ import {
   User,
 } from 'lucide-react';
 import {
-  createBrowserClient,
   dashboardPathForRole,
   isDemoMode,
   writeDemoProfile,
-} from '@/lib/supabase';
+} from '@/lib/demo-profile';
 
 type SelectableRole = 'student' | 'professor';
 
 export default function SignupPage() {
   const router = useRouter();
-  const supabase = createBrowserClient();
 
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
@@ -57,6 +54,10 @@ export default function SignupPage() {
       return;
     }
 
+    // Defer supabase-js (~90 KB) until the user actually submits.
+    const { createBrowserClient } = await import('@/lib/supabase');
+    const supabase = createBrowserClient();
+
     const { data, error: signUpError } = await supabase.auth.signUp({
       email,
       password,
@@ -71,25 +72,33 @@ export default function SignupPage() {
       return;
     }
 
-    const insertResult = await (
+    // The DB trigger `on_auth_user_created` inserts the matching
+    // profiles row using auth.users.raw_user_meta_data, so no
+    // client-side INSERT is needed here. This upsert is a belt-
+    // and-suspenders: if the trigger is disabled for some reason,
+    // we still get a profile row; if it already ran, ignoreDuplicates
+    // makes this a no-op.
+    const upsertResult = await (
       supabase as unknown as {
         from: (t: string) => {
-          insert: (row: Record<string, unknown>) => Promise<{
-            error: { message: string } | null;
-          }>;
+          upsert: (
+            row: Record<string, unknown>,
+            opts: { onConflict: string; ignoreDuplicates: boolean }
+          ) => Promise<{ error: { message: string } | null }>;
         };
       }
     )
       .from('profiles')
-      .insert({
-        id: data.user.id,
-        full_name: fullName,
-        email,
-        role,
-      });
-    const profileError = insertResult.error;
+      .upsert(
+        { id: data.user.id, full_name: fullName, email, role },
+        { onConflict: 'id', ignoreDuplicates: true }
+      );
+    const profileError = upsertResult.error;
 
-    if (profileError) {
+    // Swallow RLS violations (42501) — the trigger will have
+    // already created the row, so we don't need the client insert
+    // to succeed. Any OTHER error is worth surfacing.
+    if (profileError && !/row-level security/i.test(profileError.message)) {
       setLoading(false);
       setError(`Account created, but profile failed: ${profileError.message}`);
       return;
@@ -118,16 +127,13 @@ export default function SignupPage() {
         <div className="absolute bottom-10 left-10 h-72 w-72 rounded-full bg-emerald-500/10 blur-[100px]" />
       </div>
 
-      <motion.div
-        initial={{ opacity: 0, y: 16, scale: 0.98 }}
-        animate={{ opacity: 1, y: 0, scale: 1 }}
-        transition={{ duration: 0.45, ease: 'easeOut' }}
+      <div
         style={{
           backgroundColor: '#0F0F1A',
           border: '1px solid #1E1E2E',
           padding: '40px',
         }}
-        className="w-full max-w-md rounded-2xl shadow-[0_40px_120px_-30px_rgba(124,58,237,0.4)]"
+        className="animate-fade-in-up w-full max-w-md rounded-2xl shadow-[0_40px_120px_-30px_rgba(124,58,237,0.4)]"
       >
         <Link
           href="/"
@@ -228,13 +234,11 @@ export default function SignupPage() {
           </div>
 
           {error && (
-            <motion.p
-              initial={{ opacity: 0, y: -4 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="rounded-lg border border-error/30 bg-error/10 px-3 py-2 text-xs text-error"
+            <p
+              className="animate-fade-in-down rounded-lg border border-error/30 bg-error/10 px-3 py-2 text-xs text-error"
             >
               {error}
-            </motion.p>
+            </p>
           )}
 
           <button
@@ -262,7 +266,7 @@ export default function SignupPage() {
             Log In
           </Link>
         </p>
-      </motion.div>
+      </div>
     </main>
   );
 }

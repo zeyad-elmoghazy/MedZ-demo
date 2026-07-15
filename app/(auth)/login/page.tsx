@@ -3,17 +3,15 @@
 import { Suspense, useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { motion } from 'framer-motion';
 import { ArrowRight, Loader2, Mail, Lock } from 'lucide-react';
 import {
-  createBrowserClient,
   dashboardPathForRole,
   inferRoleFromEmail,
   isDemoMode,
   readDemoProfile,
   writeDemoProfile,
   type UserRole,
-} from '@/lib/supabase';
+} from '@/lib/demo-profile';
 
 export default function LoginPage() {
   // useSearchParams must live inside a Suspense boundary so the page
@@ -28,7 +26,6 @@ export default function LoginPage() {
 function LoginPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const supabase = createBrowserClient();
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -62,6 +59,11 @@ function LoginPageInner() {
       return;
     }
 
+    // Defer the ~90 KB supabase-js payload until the user actually
+    // submits the form. Keeps First Load JS on /login tiny.
+    const { createBrowserClient } = await import('@/lib/supabase');
+    const supabase = createBrowserClient();
+
     const { data, error: signInError } = await supabase.auth.signInWithPassword({
       email,
       password,
@@ -87,15 +89,13 @@ function LoginPageInner() {
       return;
     }
 
-    const role = profile.role;
-    const redirectedFrom = searchParams.get('redirectedFrom');
-    const fallback = dashboardPathForRole(role);
-    const safeRedirect =
-      redirectedFrom && redirectedFrom.startsWith(`/${role}`)
-        ? redirectedFrom
-        : fallback;
-
-    router.push(safeRedirect);
+    // Always land on the role's home page after sign-in — the
+    // previous `redirectedFrom` follow-through meant students who
+    // hit /student/subjects while logged out came back to subjects
+    // instead of the dashboard. If deep-link-after-auth is needed
+    // later (e.g. shared quiz links), reintroduce it behind an
+    // allowlist of paths.
+    router.push(dashboardPathForRole(profile.role));
     router.refresh();
   }
 
@@ -106,16 +106,13 @@ function LoginPageInner() {
         <div className="absolute bottom-10 right-10 h-72 w-72 rounded-full bg-emerald-500/10 blur-[100px]" />
       </div>
 
-      <motion.div
-        initial={{ opacity: 0, y: 16, scale: 0.98 }}
-        animate={{ opacity: 1, y: 0, scale: 1 }}
-        transition={{ duration: 0.45, ease: 'easeOut' }}
+      <div
         style={{
           backgroundColor: '#0F0F1A',
           border: '1px solid #1E1E2E',
           padding: '40px',
         }}
-        className="w-full max-w-md rounded-2xl shadow-[0_40px_120px_-30px_rgba(124,58,237,0.4)]"
+        className="animate-fade-in-up w-full max-w-md rounded-2xl shadow-[0_40px_120px_-30px_rgba(124,58,237,0.4)]"
       >
         <Link
           href="/"
@@ -206,13 +203,11 @@ function LoginPageInner() {
           </div>
 
           {error && (
-            <motion.p
-              initial={{ opacity: 0, y: -4 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="rounded-lg border border-error/30 bg-error/10 px-3 py-2 text-xs text-error"
+            <p
+              className="animate-fade-in-down rounded-lg border border-error/30 bg-error/10 px-3 py-2 text-xs text-error"
             >
               {error}
-            </motion.p>
+            </p>
           )}
 
           <button
@@ -240,7 +235,7 @@ function LoginPageInner() {
             Create an account
           </Link>
         </p>
-      </motion.div>
+      </div>
     </main>
   );
 }

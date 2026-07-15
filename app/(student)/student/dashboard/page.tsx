@@ -1,992 +1,1229 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useEffect, useState, type CSSProperties } from 'react';
 import Link from 'next/link';
-import dynamic from 'next/dynamic';
+import Image from 'next/image';
 import { useRouter } from 'next/navigation';
-import { AnimatePresence, motion } from 'framer-motion';
-import {
-  Activity as ActivityIcon,
-  AlertCircle,
-  ArrowRight,
-  Bookmark,
-  Flame,
-  ListChecks,
-  Loader2,
-  Lock,
-  LogOut,
-  PlayCircle,
-  Sparkles,
-  Target,
-  Trophy,
-  X,
-} from 'lucide-react';
-import { histologyQuestions } from '@/data/histology-questions';
-import type { SavedSession } from '@/lib/store';
-import {
-  getEmptyStudentStats,
-  getMockStudentStats,
-  type StudentStats,
-  type Subject,
-} from '@/lib/dashboard-data';
-import {
-  fetchStudentStats,
-  pingStreak,
-} from '@/lib/student-api';
+import { Loader2, LogOut, Moon } from 'lucide-react';
+import { MedZLogo } from '@/components/brand/MedZLogo';
 import {
   clearDemoProfile,
   createBrowserClient,
   isDemoMode,
   readDemoProfile,
+  type Profile,
 } from '@/lib/supabase';
+import {
+  getEmptyStudentStats,
+  type ChallengeResult,
+  type ProgressDataPoint,
+  type StudentStats,
+} from '@/lib/dashboard-data';
 import { useQuizStore } from '@/lib/store';
-import { AnalyticsSkeleton } from '@/components/skeletons/AnalyticsSkeleton';
-import { cn } from '@/lib/utils';
+import { NavToast, useNavToast } from '@/components/ui/NavToast';
 
-const AnalyticsDashboard = dynamic(
-  () => import('@/components/dashboard/Analytics'),
-  { loading: () => <AnalyticsSkeleton />, ssr: false }
-);
+// =============================================================
+// Static UI copy (not user data — these are visual constants that
+// describe the product itself, not the current student).
+// =============================================================
 
-type ApiStudentStats = StudentStats & {
-  profile?: { id: string; full_name: string | null; email: string | null };
-  bookmarksCount?: number;
+type LockedSubject = {
+  name: string;
+  image: string;         // path under /public
+  gradientFrom: string;  // color-coded overlay start — the emoji is gone
+  gradientTo: string;    // but the color identity per subject stays
 };
+
+// "Coming soon" subject placeholders on the home grid. Not user
+// data — this is the marketing catalog. Real per-subject stats
+// come from /api/student/stats.subjects. Images live in
+// public/subjects/<name>.png.
+const LOCKED: LockedSubject[] = [
+  { name: 'Anatomy',      image: '/subjects/anatomy.webp',      gradientFrom: 'rgba(59,130,246,0.55)', gradientTo: 'rgba(15,23,42,0.15)' },
+  { name: 'Physiology',   image: '/subjects/physiology.webp',   gradientFrom: 'rgba(239,68,68,0.55)',  gradientTo: 'rgba(15,23,42,0.15)' },
+  { name: 'Biochemistry', image: '/subjects/biochemistry.webp', gradientFrom: 'rgba(16,185,129,0.55)', gradientTo: 'rgba(15,23,42,0.15)' },
+  { name: 'Pathology',    image: '/subjects/pathology.webp',    gradientFrom: 'rgba(236,72,153,0.55)', gradientTo: 'rgba(15,23,42,0.15)' },
+  { name: 'Pharmacology', image: '/subjects/pharmacology.webp', gradientFrom: 'rgba(249,115,22,0.55)', gradientTo: 'rgba(15,23,42,0.15)' },
+];
+
+// Feature-strip copy at the bottom of the home view. Product
+// benefits, not user metrics.
+const FEATURES = [
+  { icon: '🛡️', title: 'Doctor-Curated Content',  sub: 'Trusted by top medical educators' },
+  { icon: '🧠',  title: 'AI-Powered Explanations', sub: 'Understand every concept deeply'  },
+  { icon: '🖼️', title: 'Visual References',       sub: 'See it. Understand it. Remember it.' },
+  { icon: '🏆',  title: 'Track & Improve',         sub: 'Monitor your progress and rank up' },
+];
+
+// =============================================================
+// Page
+// =============================================================
 
 export default function StudentDashboardPage() {
   const router = useRouter();
   const supabase = createBrowserClient();
   const startSession = useQuizStore((s) => s.startSession);
-  const loadSession = useQuizStore((s) => s.loadSession);
-  const clearSession = useQuizStore((s) => s.clearSession);
 
-  const [stats, setStats] = useState<ApiStudentStats | null>(null);
-  const [userName, setUserName] = useState<string>('Student');
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [view, setView] = useState<'home' | 'analytics'>('home');
+  const [firstName, setFirstName] = useState('');
+  const [displayName, setDisplayName] = useState('');
   const [signingOut, setSigningOut] = useState(false);
-  const [showResumeModal, setShowResumeModal] = useState(false);
-  const [resumeSession, setResumeSession] = useState<SavedSession | null>(null);
+  const [stats, setStats] = useState<StudentStats | null>(null);
+  const [statsLoading, setStatsLoading] = useState(true);
 
-  const loadDashboard = useCallback(async () => {
-    setIsLoading(true);
-    setError(null);
-
-    // Step 1 — Get user name (fast, so the greeting paints early).
-    if (isDemoMode()) {
-      const demo = readDemoProfile();
-      if (demo?.full_name) setUserName(demo.full_name);
-    } else {
+  // Populate name from the demo profile (or real Supabase profile).
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (isDemoMode()) {
+        const demo = readDemoProfile();
+        if (demo?.full_name && !cancelled) {
+          setDisplayName(demo.full_name);
+          setFirstName(demo.full_name.split(/\s+/)[0] ?? demo.full_name);
+        }
+        return;
+      }
       try {
-        const {
-          data: { user },
-        } = await supabase.auth.getUser();
-        if (user) {
-          const { data } = await supabase
-            .from('profiles')
-            .select('full_name')
-            .eq('id', user.id)
-            .single();
-          const profile = data as { full_name: string | null } | null;
-          if (profile?.full_name) setUserName(profile.full_name);
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) return;
+        const { data } = await supabase
+          .from('profiles')
+          .select('full_name')
+          .eq('id', user.id)
+          .single();
+        const profile = data as Pick<Profile, 'full_name'> | null;
+        if (!cancelled && profile?.full_name) {
+          setDisplayName(profile.full_name);
+          setFirstName(profile.full_name.split(/\s+/)[0] ?? profile.full_name);
         }
       } catch {
-        // Name fetch is best-effort — we still render "Student".
+        /* leave name blank if the profile fetch fails */
       }
-    }
-
-    // Step 2 — Ping streak (fire-and-forget).
-    if (!isDemoMode()) {
-      pingStreak().catch(() => {});
-    }
-
-    // Step 3 — Fetch real stats.
-    if (isDemoMode()) {
-      setStats(getMockStudentStats());
-    } else {
-      try {
-        const data = (await fetchStudentStats()) as ApiStudentStats;
-        setStats(data);
-        if (data.profile?.full_name) setUserName(data.profile.full_name);
-      } catch {
-        setError('Failed to load your stats.');
-        setStats(getEmptyStudentStats());
-      }
-    }
-
-    // Step 4 — Done.
-    setIsLoading(false);
+    })();
+    return () => { cancelled = true; };
   }, [supabase]);
 
+  // Fetch per-student stats from /api/student/stats. In demo mode
+  // the API needs a real Supabase session, so we short-circuit to
+  // an empty shape (the UI still paints with zeros and empty
+  // states — no fake numbers).
   useEffect(() => {
-    loadDashboard();
-  }, [loadDashboard]);
+    let cancelled = false;
+    (async () => {
+      if (isDemoMode()) {
+        if (!cancelled) {
+          setStats(getEmptyStudentStats());
+          setStatsLoading(false);
+        }
+        return;
+      }
+      try {
+        const res = await fetch('/api/student/stats', {
+          credentials: 'include',
+          // Let the browser reuse the server's `Cache-Control: private,
+          // max-age=60` response so a quick dashboard → analytics →
+          // dashboard round-trip skips the API call.
+        });
+        if (!res.ok) throw new Error(`stats fetch failed: ${res.status}`);
+        const json = (await res.json()) as StudentStats;
+        if (!cancelled) setStats(json);
+      } catch {
+        // Network failure or 401 — fall back to the empty shape so
+        // the dashboard still paints instead of exploding.
+        if (!cancelled) setStats(getEmptyStudentStats());
+      } finally {
+        if (!cancelled) setStatsLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   async function handleLogout() {
     if (signingOut) return;
     setSigningOut(true);
     clearDemoProfile();
-    if (!isDemoMode()) {
-      await supabase.auth.signOut().catch(() => {});
-    }
+    if (!isDemoMode()) await supabase.auth.signOut().catch(() => {});
     router.push('/login');
     router.refresh();
   }
 
   function handleStartHistology() {
-    // Try to restore a saved session — if one exists, show the
-    // resume modal so the student picks Start Fresh vs Continue.
-    const resumed = loadSession('histology');
-    if (resumed) {
-      const saved = useQuizStore.getState().savedSession;
-      setResumeSession(saved);
-      setShowResumeModal(true);
-      return;
-    }
     startSession();
     router.push('/student/quiz/histology');
   }
 
-  function handleResumeContinue() {
-    setShowResumeModal(false);
-    // loadSession already merged the saved state into the store;
-    // we just navigate.
-    router.push('/student/quiz/histology');
-  }
+  const toggleView = () => setView((v) => (v === 'home' ? 'analytics' : 'home'));
 
-  function handleResumeFresh() {
-    clearSession();
-    setShowResumeModal(false);
-    startSession();
-    router.push('/student/quiz/histology');
-  }
+  // Canvas background — design's radial gradients + dotted texture.
+  const canvasBg: CSSProperties = {
+    width: 1280,
+    margin: '0 auto',
+    position: 'relative',
+    overflow: 'hidden',
+    background:
+      'radial-gradient(900px 520px at 88% -6%, rgba(124,58,237,0.3), transparent 60%),' +
+      'radial-gradient(760px 520px at 6% 42%, rgba(88,28,235,0.18), transparent 55%),' +
+      '#08070F',
+    paddingBottom: 2,
+  };
 
-  const initials = useMemo(() => {
-    const trimmed = userName.trim() || 'Student';
-    return trimmed
-      .split(/\s+/)
-      .map((n) => n[0])
-      .filter(Boolean)
-      .slice(0, 2)
-      .join('')
-      .toUpperCase();
-  }, [userName]);
+  const dotTexture: CSSProperties = {
+    position: 'absolute',
+    inset: 0,
+    backgroundImage: 'radial-gradient(rgba(255,255,255,0.045) 1px, transparent 1px)',
+    backgroundSize: '26px 26px',
+    opacity: 0.5,
+    pointerEvents: 'none',
+  };
 
-  // -------------- LOADING --------------
-  if (isLoading) {
-    return (
-      <main className="min-h-screen" style={{ backgroundColor: '#09090E' }}>
-        <TopNav
-          userName={userName}
-          initials={initials}
+  return (
+    <main style={{ minHeight: '100vh', background: '#08070F', fontFamily: 'Inter, system-ui, sans-serif' }}>
+      <div style={canvasBg}>
+        <div aria-hidden style={dotTexture} />
+
+        <Navbar
+          view={view}
+          onToggleView={toggleView}
+          userLabel={displayName}
           signingOut={signingOut}
           onLogout={handleLogout}
         />
-        <div className="p-8 max-w-[1400px] mx-auto">
-          {/* Header skeleton */}
-          <div className="flex justify-between mb-8">
-            <div className="space-y-2">
-              <div className="h-7 w-48 bg-slate-800 rounded-lg animate-pulse" />
-              <div className="h-4 w-64 bg-slate-800/50 rounded animate-pulse" />
-            </div>
-            <div className="w-10 h-10 bg-slate-800 rounded-full animate-pulse" />
-          </div>
 
-          {/* Metric cards skeleton */}
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-            {[0, 1, 2, 3].map((i) => (
-              <div
-                key={i}
-                className="h-28 bg-slate-800/50 rounded-2xl animate-pulse"
-              />
-            ))}
-          </div>
-
-          {/* Chart + subjects skeleton */}
-          <div className="grid lg:grid-cols-[1fr_340px] gap-6">
-            <div className="space-y-6">
-              <div className="h-72 bg-slate-800/50 rounded-2xl animate-pulse" />
-              <div className="h-48 bg-slate-800/50 rounded-2xl animate-pulse" />
-            </div>
-            <div className="h-96 bg-slate-800/50 rounded-2xl animate-pulse" />
-          </div>
-        </div>
-      </main>
-    );
-  }
-
-  // -------------- ERROR (no usable data) --------------
-  if (error && (!stats || stats.totalQuestionsAnswered === 0)) {
-    return (
-      <main
-        className="min-h-screen flex items-center justify-center px-6"
-        style={{ backgroundColor: '#09090E' }}
-      >
-        <motion.div
-          initial={{ opacity: 0, scale: 0.96, y: 8 }}
-          animate={{ opacity: 1, scale: 1, y: 0 }}
-          transition={{ duration: 0.3, ease: 'easeOut' }}
-          className="w-full max-w-md rounded-2xl p-8 text-center"
-          style={{
-            backgroundColor: '#0F0F1A',
-            border: '1px solid #1E1E2E',
-            boxShadow: '0 30px 80px -20px rgba(0,0,0,0.6)',
-          }}
-        >
-          <span
-            className="mx-auto mb-5 grid h-14 w-14 place-items-center rounded-2xl"
-            style={{
-              backgroundColor: 'rgba(239,68,68,0.12)',
-              color: '#EF4444',
-              border: '1px solid rgba(239,68,68,0.35)',
-              boxShadow: '0 0 20px rgba(239,68,68,0.3)',
-            }}
-          >
-            <AlertCircle className="h-7 w-7" />
-          </span>
-          <h2 className="text-xl font-semibold tracking-tight text-white">
-            Couldn&apos;t load your data
-          </h2>
-          <p className="mt-2 text-sm text-slate-400">{error}</p>
-
-          <div className="mt-6 flex flex-col gap-2 sm:flex-row sm:justify-center">
-            <Link
-              href="/student/dashboard"
-              onClick={(e) => {
-                e.preventDefault();
-                loadDashboard();
-              }}
-              className="inline-flex h-10 items-center justify-center gap-2 rounded-xl px-5 text-sm font-medium text-text-primary transition hover:text-white"
-              style={{ border: '1px solid #1E1E2E', backgroundColor: '#0A0A12' }}
-            >
-              Retry without reload
-            </Link>
-            <button
-              type="button"
-              onClick={() => window.location.reload()}
-              className="inline-flex h-10 items-center justify-center gap-2 rounded-xl px-5 text-sm font-semibold text-white transition"
-              style={{
-                backgroundColor: '#7C3AED',
-                boxShadow: '0 0 22px rgba(124,58,237,0.5)',
-              }}
-            >
-              Try again
-            </button>
-          </div>
-        </motion.div>
-      </main>
-    );
-  }
-
-  // -------------- DASHBOARD --------------
-  const data = stats ?? getEmptyStudentStats();
-  const challengesCompleted = data.subjects.reduce(
-    (sum, s) => sum + s.challengesCompleted,
-    0
-  );
-
-  return (
-    <main className="min-h-screen" style={{ backgroundColor: '#09090E' }}>
-      <TopNav
-        userName={userName}
-        initials={initials}
-        signingOut={signingOut}
-        onLogout={handleLogout}
-      />
-
-      <motion.div
-        initial="hidden"
-        animate="visible"
-        variants={{
-          hidden: {},
-          visible: { transition: { staggerChildren: 0.06, delayChildren: 0.04 } },
-        }}
-        className="p-8 max-w-[1400px] mx-auto"
-      >
-        {error && (
-          <FadeUp>
-            <div
-              className="mb-6 flex items-center gap-3 rounded-xl px-4 py-3 text-sm"
-              style={{
-                backgroundColor: 'rgba(239,68,68,0.08)',
-                border: '1px solid rgba(239,68,68,0.35)',
-                color: '#FCA5A5',
-              }}
-            >
-              <AlertCircle className="h-4 w-4 shrink-0" />
-              {error} Showing what we have on file.
-            </div>
-          </FadeUp>
-        )}
-
-        {/* Header */}
-        <FadeUp>
-          <header className="mb-8 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-            <div>
-              <p className="text-[11px] uppercase tracking-[0.22em] text-violet-300">
-                Welcome back
-              </p>
-              <h1
-                className="mt-2 text-3xl font-semibold tracking-tight text-white md:text-4xl"
-                style={{ textShadow: '0 0 18px rgba(124,58,237,0.45)' }}
-              >
-                Hi, {userName.split(' ')[0]}.
-              </h1>
-              <p className="mt-2 text-sm text-text-muted">
-                {data.streakDays > 0
-                  ? `You're on a ${data.streakDays}-day streak — keep it alive today.`
-                  : 'Pick a subject below to start your streak.'}
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={handleStartHistology}
-              className="inline-flex h-11 items-center gap-2 rounded-xl px-5 text-sm font-semibold text-white transition"
-              style={{
-                backgroundColor: '#7C3AED',
-                boxShadow: '0 0 24px rgba(124,58,237,0.5)',
-              }}
-            >
-              <Sparkles className="h-4 w-4" />
-              Start Histology challenge
-              <ArrowRight className="h-4 w-4" />
-            </button>
-          </header>
-        </FadeUp>
-
-        {/* Metric cards */}
-        <FadeUp>
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-            <MetricTile
-              icon={<ListChecks className="h-4 w-4" />}
-              label="Questions Answered"
-              value={data.totalQuestionsAnswered.toLocaleString()}
-              hint={`${data.totalCorrectAnswers.toLocaleString()} correct`}
-              accent="#9F67FF"
-            />
-            <MetricTile
-              icon={<Target className="h-4 w-4" />}
-              label="Accuracy"
-              value={`${data.overallAccuracy}%`}
-              hint={
-                data.totalQuestionsAnswered > 0
-                  ? 'Lifetime average'
-                  : 'Answer one to start'
-              }
-              accent="#10B981"
-            />
-            <MetricTile
-              icon={<Flame className="h-4 w-4" />}
-              label="Streak"
-              value={`${data.streakDays}d`}
-              hint={data.streakDays > 0 ? 'Keep it going' : 'Begin today'}
-              accent="#EF4444"
-            />
-            <MetricTile
-              icon={<Trophy className="h-4 w-4" />}
-              label="Challenges"
-              value={challengesCompleted.toString()}
-              hint={`${data.recentChallenges.length} recent`}
-              accent="#9F67FF"
-            />
-          </div>
-        </FadeUp>
-
-        {/* Chart + subjects */}
-        <div className="grid lg:grid-cols-[1fr_340px] gap-6">
-          <div className="space-y-6">
-            <FadeUp>
-              {data.progressHistory.length > 0 ? (
-                <AnalyticsDashboard
-                  data={data.progressHistory}
-                  currentAccuracy={data.overallAccuracy}
-                />
-              ) : (
-                <EmptyChartCard />
-              )}
-            </FadeUp>
-            <FadeUp>
-              <RecentChallenges challenges={data.recentChallenges} />
-            </FadeUp>
-          </div>
-          <FadeUp>
-            <SubjectsSidebar
-              subjects={data.subjects}
-              onStartHistology={handleStartHistology}
-            />
-          </FadeUp>
-        </div>
-      </motion.div>
-
-      <AnimatePresence>
-        {showResumeModal && resumeSession && (
-          <ResumeModal
-            session={resumeSession}
-            onContinue={handleResumeContinue}
-            onStartFresh={handleResumeFresh}
-            onClose={() => setShowResumeModal(false)}
+        {view === 'home' ? (
+          <HomeView
+            firstName={firstName}
+            onStartHistology={handleStartHistology}
+            onViewAnalytics={() => setView('analytics')}
+          />
+        ) : (
+          <AnalyticsView
+            firstName={firstName || 'there'}
+            stats={stats}
+            loading={statsLoading}
+            onBackToSubjects={() => setView('home')}
           />
         )}
-      </AnimatePresence>
+      </div>
     </main>
   );
 }
 
-function ResumeModal({
-  session,
-  onContinue,
-  onStartFresh,
-  onClose,
+// =============================================================
+// Navbar
+// =============================================================
+
+const NAV_LINKS: { label: string; href?: string; active?: boolean; toast?: string }[] = [
+  { label: 'Home',        active: true },
+  { label: 'Subjects',    href: '/student/subjects' },
+  { label: 'Questions',   href: '/student/quiz/histology' },
+  { label: 'AI Tutor',    toast: 'Coming soon.' },
+  { label: 'Leaderboard' },
+  { label: 'Pricing',     toast: 'Free for now.' },
+];
+
+function Navbar({
+  view,
+  onToggleView,
+  userLabel,
+  signingOut,
+  onLogout,
 }: {
-  session: SavedSession;
-  onContinue: () => void;
-  onStartFresh: () => void;
-  onClose: () => void;
+  view: 'home' | 'analytics';
+  onToggleView: () => void;
+  userLabel: string;
+  signingOut: boolean;
+  onLogout: () => void;
 }) {
-  const total = histologyQuestions.length;
-  const answeredCount = Object.keys(session.answers).length;
-  const correctCount = histologyQuestions.reduce(
-    (sum, q) => (session.answers[q.id] === q.correctAnswer ? sum + 1 : sum),
-    0
-  );
+  const initials = userLabel
+    .split(/\s+/)
+    .map((n) => n[0])
+    .filter(Boolean)
+    .slice(0, 2)
+    .join('')
+    .toUpperCase();
+
+  const { message, showToast } = useNavToast();
 
   return (
     <>
-      <motion.div
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        exit={{ opacity: 0 }}
-        transition={{ duration: 0.2 }}
-        onClick={onClose}
-        className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm"
-      />
-      <motion.div
-        role="dialog"
-        aria-modal="true"
-        initial={{ opacity: 0, scale: 0.95 }}
-        animate={{ opacity: 1, scale: 1 }}
-        exit={{ opacity: 0, scale: 0.95 }}
-        transition={{ duration: 0.2 }}
-        className="fixed left-1/2 top-1/2 z-50 w-full max-w-md -translate-x-1/2 -translate-y-1/2 rounded-2xl p-8 shadow-2xl mx-4"
-        style={{
-          backgroundColor: '#161B26',
-          border: '1px solid rgba(255,255,255,0.07)',
-        }}
-      >
+    <nav
+      style={{
+        position: 'relative',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        padding: '20px 34px',
+        borderBottom: '1px solid rgba(255,255,255,0.06)',
+      }}
+    >
+      <MedZLogo size="sm" />
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 30, fontSize: 13.5, fontWeight: 500 }}>
+        {NAV_LINKS.map((link) => {
+          if (link.href) {
+            return (
+              <Link
+                key={link.label}
+                href={link.href}
+                style={{ color: '#94A3B8', textDecoration: 'none' }}
+              >
+                {link.label}
+              </Link>
+            );
+          }
+          if (link.toast) {
+            return (
+              <button
+                key={link.label}
+                type="button"
+                onClick={() => showToast(link.toast!)}
+                style={{
+                  color: '#94A3B8',
+                  fontWeight: 500,
+                  fontSize: 13.5,
+                  background: 'transparent',
+                  border: 'none',
+                  padding: 0,
+                  cursor: 'pointer',
+                  fontFamily: 'inherit',
+                }}
+              >
+                {link.label}
+              </button>
+            );
+          }
+          return (
+            <span
+              key={link.label}
+              style={{
+                color: link.active ? '#F8FAFC' : '#94A3B8',
+                fontWeight: link.active ? 600 : 500,
+              }}
+            >
+              {link.label}
+            </span>
+          );
+        })}
+      </div>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
         <button
           type="button"
-          onClick={onClose}
-          aria-label="Close"
-          className="absolute right-4 top-4 grid h-8 w-8 place-items-center rounded-md text-slate-500 transition hover:text-white"
+          onClick={onToggleView}
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 8,
+            fontSize: 13,
+            fontWeight: 700,
+            color: '#fff',
+            background: 'linear-gradient(135deg,#7C3AED,#8B5CF6)',
+            padding: '9px 16px',
+            borderRadius: 10,
+            boxShadow: '0 0 18px rgba(124,58,237,0.4)',
+            cursor: 'pointer',
+            border: 'none',
+          }}
         >
-          <X className="h-4 w-4" />
+          {view === 'home' ? '📊 My Progress' : '← Home'}
         </button>
 
-        <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-purple-500/10">
-          <PlayCircle className="h-6 w-6 text-purple-400" />
-        </div>
-
-        <h2 className="mb-2 text-center text-xl font-bold text-white">
-          Resume Challenge?
-        </h2>
-        <p className="mb-6 text-center text-sm text-slate-400">
-          You have an unfinished Histology session.
-        </p>
-
-        <div
-          className="mb-6 rounded-xl p-4"
-          style={{ backgroundColor: '#0F0F1A' }}
+        <button
+          type="button"
+          aria-label="Toggle theme"
+          style={{
+            width: 34,
+            height: 34,
+            borderRadius: 9,
+            border: '1px solid rgba(255,255,255,0.12)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            color: '#94A3B8',
+            background: 'transparent',
+            cursor: 'pointer',
+          }}
         >
-          <ProgressRow
-            label="Progress saved"
-            value={`${answeredCount} / ${total} questions`}
-          />
-          <ProgressRow
-            label="Last question"
-            value={`Question ${session.currentQuestionIndex + 1}`}
-            valueClass="text-purple-400 font-semibold"
-          />
-          <ProgressRow
-            label="Correct so far"
-            value={String(correctCount)}
-            valueClass="text-emerald-400 font-semibold"
-            last
-          />
-        </div>
+          <Moon style={{ width: 15, height: 15 }} />
+        </button>
 
-        <div className="flex gap-3">
-          <button
-            type="button"
-            onClick={onStartFresh}
-            className="flex-1 rounded-xl py-3 text-sm font-semibold text-slate-300 transition-colors duration-200"
+        {/* Design showed Log in / Sign up, but this is the authenticated
+            student dashboard — swap for user pill + Logout to stay
+            semantically correct without breaking the navbar rhythm. */}
+        <span
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 8,
+            fontSize: 13.5,
+            fontWeight: 600,
+            color: '#CBD5E1',
+          }}
+        >
+          <span
             style={{
-              backgroundColor: '#1E1E2E',
-              border: '1px solid rgba(255,255,255,0.07)',
+              width: 26,
+              height: 26,
+              borderRadius: '50%',
+              display: 'grid',
+              placeItems: 'center',
+              background: 'linear-gradient(135deg,#7C3AED,#8B5CF6)',
+              color: '#fff',
+              fontSize: 11,
+              fontWeight: 700,
             }}
-            onMouseEnter={(e) =>
-              (e.currentTarget.style.backgroundColor = '#252535')
-            }
-            onMouseLeave={(e) =>
-              (e.currentTarget.style.backgroundColor = '#1E1E2E')
-            }
           >
-            Start Fresh
-          </button>
-          <button
-            type="button"
-            onClick={onContinue}
-            className="flex-1 rounded-xl py-3 text-sm font-semibold text-white transition-colors duration-200"
-            style={{ backgroundColor: '#9333EA' }}
-            onMouseEnter={(e) =>
-              (e.currentTarget.style.backgroundColor = '#7E22CE')
-            }
-            onMouseLeave={(e) =>
-              (e.currentTarget.style.backgroundColor = '#9333EA')
-            }
-          >
-            Continue Session
-          </button>
-        </div>
-      </motion.div>
+            {initials || 'ME'}
+          </span>
+          {userLabel}
+        </span>
+
+        <button
+          type="button"
+          onClick={onLogout}
+          disabled={signingOut}
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 6,
+            fontSize: 13.5,
+            fontWeight: 600,
+            color: '#CBD5E1',
+            background: 'transparent',
+            border: 'none',
+            cursor: 'pointer',
+            padding: 0,
+          }}
+        >
+          {signingOut ? <Loader2 style={{ width: 13, height: 13 }} className="animate-spin" /> : <LogOut style={{ width: 13, height: 13 }} />}
+          Log out
+        </button>
+      </div>
+    </nav>
+    <NavToast message={message} />
     </>
   );
 }
 
-function ProgressRow({
-  label,
-  value,
-  valueClass,
-  last,
-}: {
-  label: string;
-  value: string;
-  valueClass?: string;
-  last?: boolean;
-}) {
-  return (
-    <div
-      className="flex items-center justify-between py-2 text-sm text-slate-400"
-      style={
-        last
-          ? undefined
-          : { borderBottom: '1px solid rgba(255,255,255,0.05)' }
-      }
-    >
-      <span>{label}</span>
-      <span className={valueClass ?? 'text-white font-semibold'}>{value}</span>
-    </div>
-  );
-}
+// =============================================================
+// HOME VIEW — hero + subjects grid + features
+// =============================================================
 
-// ============== Helpers ==============
-
-function FadeUp({ children }: { children: React.ReactNode }) {
-  return (
-    <motion.div
-      variants={{
-        hidden: { opacity: 0, y: 18 },
-        visible: { opacity: 1, y: 0, transition: { duration: 0.4, ease: 'easeOut' } },
-      }}
-    >
-      {children}
-    </motion.div>
-  );
-}
-
-function TopNav({
-  userName,
-  initials,
-  signingOut,
-  onLogout,
-}: {
-  userName: string;
-  initials: string;
-  signingOut: boolean;
-  onLogout: () => void;
-}) {
-  return (
-    <header
-      className="sticky top-0 z-30 backdrop-blur-xl"
-      style={{
-        backgroundColor: 'rgba(9, 9, 14, 0.85)',
-        borderBottom: '1px solid #1E1E2E',
-      }}
-    >
-      <div className="mx-auto flex h-16 w-full max-w-[1400px] items-center justify-between px-6">
-        <Link href="/student/dashboard" className="flex items-center gap-2">
-          <span
-            className="grid h-9 w-9 place-items-center rounded-xl bg-gradient-to-br from-violet-600 to-violet-400"
-            style={{ boxShadow: '0 0 24px rgba(124,58,237,0.55)' }}
-          >
-            <ActivityIcon className="h-4 w-4 text-white" />
-          </span>
-          <span
-            className="text-lg font-bold tracking-tight text-white"
-            style={{ textShadow: '0 0 14px rgba(124,58,237,0.5)' }}
-          >
-            MedZ
-          </span>
-        </Link>
-
-        <div className="flex items-center gap-3">
-          <Link
-            href="/student/analytics"
-            className="hidden h-9 items-center gap-1.5 rounded-full px-3 text-xs text-text-muted transition hover:text-white sm:inline-flex"
-            style={{ border: '1px solid #1E1E2E', backgroundColor: '#0F0F1A' }}
-          >
-            Analytics
-            <ArrowRight className="h-3 w-3" />
-          </Link>
-          <div
-            className="flex items-center gap-3 rounded-full py-1 pl-1 pr-4"
-            style={{ border: '1px solid #1E1E2E', backgroundColor: '#0F0F1A' }}
-          >
-            <span
-              className="grid h-8 w-8 place-items-center rounded-full bg-gradient-to-br from-violet-500 to-violet-700 text-xs font-semibold text-white"
-              style={{ boxShadow: '0 0 14px rgba(124,58,237,0.45)' }}
-            >
-              {initials || 'ME'}
-            </span>
-            <div className="hidden flex-col leading-tight sm:flex">
-              <span className="text-xs font-medium text-white">{userName}</span>
-              <span className="text-[10px] uppercase tracking-[0.18em] text-text-muted">
-                Student
-              </span>
-            </div>
-          </div>
-          <button
-            type="button"
-            onClick={onLogout}
-            disabled={signingOut}
-            className="inline-flex h-10 items-center gap-2 rounded-full px-4 text-xs font-medium text-text-muted transition hover:text-white disabled:opacity-50"
-            style={{ border: '1px solid #1E1E2E', backgroundColor: '#0F0F1A' }}
-          >
-            {signingOut ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <LogOut className="h-3.5 w-3.5" />
-            )}
-            Logout
-          </button>
-        </div>
-      </div>
-    </header>
-  );
-}
-
-function MetricTile({
-  icon,
-  label,
-  value,
-  hint,
-  accent,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  value: string;
-  hint: string;
-  accent: string;
-}) {
-  return (
-    <div
-      className="relative overflow-hidden rounded-2xl p-5"
-      style={{ backgroundColor: '#0F0F1A', border: '1px solid #1E1E2E' }}
-    >
-      <div
-        aria-hidden
-        className="pointer-events-none absolute -right-10 -top-10 h-28 w-28 rounded-full"
-        style={{ background: `${accent}26`, filter: 'blur(32px)' }}
-      />
-      <div className="relative">
-        <span
-          className="grid h-9 w-9 place-items-center rounded-lg"
-          style={{ backgroundColor: `${accent}22`, color: accent }}
-        >
-          {icon}
-        </span>
-        <p className="mt-5 text-3xl font-semibold tracking-tight text-white">
-          {value}
-        </p>
-        <p className="mt-1 text-[11px] uppercase tracking-[0.18em] text-text-muted">
-          {label}
-        </p>
-        <p className="mt-2 text-xs text-text-muted">{hint}</p>
-      </div>
-    </div>
-  );
-}
-
-function RecentChallenges({
-  challenges,
-}: {
-  challenges: StudentStats['recentChallenges'];
-}) {
-  return (
-    <section
-      className="rounded-2xl p-6"
-      style={{ backgroundColor: '#0F0F1A', border: '1px solid #1E1E2E' }}
-    >
-      <div className="flex items-baseline justify-between">
-        <div>
-          <p className="text-[10px] uppercase tracking-[0.22em] text-violet-300">
-            Last sessions
-          </p>
-          <h2 className="mt-0.5 text-base font-semibold tracking-tight text-white">
-            Recent challenges
-          </h2>
-        </div>
-        <span className="text-xs text-text-muted">
-          {challenges.length} shown
-        </span>
-      </div>
-
-      {challenges.length === 0 ? (
-        <div
-          className="mt-5 flex flex-col items-center gap-3 rounded-xl p-8 text-center"
-          style={{ border: '1px dashed #1E1E2E' }}
-        >
-          <span
-            className="grid h-10 w-10 place-items-center rounded-full"
-            style={{ backgroundColor: 'rgba(124,58,237,0.12)' }}
-          >
-            <Sparkles className="h-4 w-4 text-violet-300" />
-          </span>
-          <p className="max-w-xs text-sm text-text-muted">
-            No sessions yet. Start the Histology challenge to see your first result land here.
-          </p>
-        </div>
-      ) : (
-        <ul className="mt-4 divide-y" style={{ borderColor: '#1E1E2E' }}>
-          {challenges.map((c, i) => (
-            <li
-              key={c.id}
-              className="flex items-center gap-4 py-3"
-              style={{ borderTop: i === 0 ? '1px solid transparent' : undefined }}
-            >
-              <span
-                className={cn(
-                  'grid h-9 w-9 shrink-0 place-items-center rounded-lg text-sm font-semibold',
-                  c.accuracy >= 70
-                    ? 'text-emerald-300'
-                    : c.accuracy >= 50
-                      ? 'text-violet-200'
-                      : 'text-rose-300'
-                )}
-                style={{
-                  backgroundColor:
-                    c.accuracy >= 70
-                      ? 'rgba(16,185,129,0.15)'
-                      : c.accuracy >= 50
-                        ? 'rgba(124,58,237,0.15)'
-                        : 'rgba(239,68,68,0.15)',
-                }}
-              >
-                {Math.round(c.accuracy)}%
-              </span>
-              <div className="flex-1">
-                <p className="text-sm font-medium text-white">
-                  {c.subjectName}
-                </p>
-                <p className="text-[11px] text-text-muted">
-                  {c.score} / {c.total} correct
-                </p>
-              </div>
-              <span className="text-xs text-text-muted">
-                {formatRelative(c.completedAt)}
-              </span>
-            </li>
-          ))}
-        </ul>
-      )}
-    </section>
-  );
-}
-
-function SubjectsSidebar({
-  subjects,
+function HomeView({
   onStartHistology,
+  onViewAnalytics,
 }: {
-  subjects: Subject[];
+  firstName: string;
   onStartHistology: () => void;
+  onViewAnalytics: () => void;
 }) {
-  const featured = subjects.find((s) => s.available);
-  const locked = subjects.filter((s) => !s.available);
-
   return (
-    <aside
-      className="rounded-2xl p-6"
-      style={{ backgroundColor: '#0F0F1A', border: '1px solid #1E1E2E' }}
-    >
-      <div className="flex items-baseline justify-between">
-        <div>
-          <p className="text-[10px] uppercase tracking-[0.22em] text-violet-300">
-            Subjects
-          </p>
-          <h2 className="mt-0.5 text-base font-semibold tracking-tight text-white">
-            Your library
-          </h2>
-        </div>
-        <span className="text-xs text-text-muted">
-          {subjects.length} blocks
-        </span>
-      </div>
-
-      {featured && (
-        <button
-          type="button"
-          onClick={onStartHistology}
-          className="group relative mt-5 flex w-full overflow-hidden rounded-xl p-4 text-left"
+    <>
+      {/* ================= HERO ================= */}
+      <section
+        style={{
+          position: 'relative',
+          display: 'grid',
+          gridTemplateColumns: '420px 1fr',
+          gap: 56,
+          alignItems: 'center',
+          padding: '54px 44px 40px',
+        }}
+      >
+        {/* Doctor holographic frame */}
+        <div
           style={{
-            background: 'linear-gradient(160deg, #1A0A2E 0%, #0F0F1A 100%)',
-            border: '1px solid rgba(159, 103, 255, 0.35)',
-            boxShadow: '0 0 24px rgba(124,58,237,0.25)',
+            position: 'relative',
+            display: 'flex',
+            justifyContent: 'center',
+            alignItems: 'center',
+            height: 440,
           }}
         >
-          <AnimatePresence>
-            <motion.span
-              key="glow"
-              aria-hidden
-              animate={{
-                boxShadow: [
-                  '0 0 0 1px rgba(159,103,255,0.35)',
-                  '0 0 0 1px rgba(159,103,255,0.7)',
-                  '0 0 0 1px rgba(159,103,255,0.35)',
-                ],
-              }}
-              transition={{ duration: 2.6, repeat: Infinity, ease: 'easeInOut' }}
-              className="pointer-events-none absolute inset-0 rounded-xl"
-            />
-          </AnimatePresence>
+          <div
+            aria-hidden
+            style={{
+              position: 'absolute',
+              width: 360,
+              height: 360,
+              borderRadius: '50%',
+              border: '1px solid rgba(124,58,237,0.25)',
+              animation: 'ringSpin 26s linear infinite',
+            }}
+          />
+          <div
+            aria-hidden
+            style={{
+              position: 'absolute',
+              width: 300,
+              height: 300,
+              borderRadius: '50%',
+              border: '1px dashed rgba(139,92,246,0.3)',
+            }}
+          />
+          <div
+            aria-hidden
+            style={{
+              position: 'absolute',
+              width: 380,
+              height: 200,
+              bottom: 34,
+              borderRadius: '50%',
+              background: 'radial-gradient(ellipse at center, rgba(124,58,237,0.45), transparent 70%)',
+              filter: 'blur(18px)',
+            }}
+          />
 
-          <div className="relative flex flex-1 items-start gap-3">
-            <span
-              className="grid h-11 w-11 shrink-0 place-items-center rounded-xl text-2xl"
-              style={{
-                background:
-                  'radial-gradient(circle at 30% 30%, #9F67FF 0%, #7C3AED 60%, #4C1D95 100%)',
-                boxShadow: '0 0 18px rgba(124,58,237,0.55)',
-              }}
+          {/* Signature credential card — sits inside the top-left
+              of the photo, above the doctor's face. */}
+          <div
+            style={{
+              position: 'absolute',
+              left: 0,
+              top: 55,
+              zIndex: 3,
+              width: 174,
+              background: 'rgba(13,11,26,0.82)',
+              backdropFilter: 'blur(10px)',
+              WebkitBackdropFilter: 'blur(10px)',
+              border: '1px solid rgba(139,92,246,0.35)',
+              borderRadius: 12,
+              padding: '11px 13px',
+              boxShadow: '0 10px 32px rgba(0,0,0,0.5)',
+            }}
+          >
+            <div
+              className="font-handwritten"
+              style={{ fontSize: 19, color: '#C4B5FD', lineHeight: 1, marginBottom: 8 }}
             >
-              {featured.icon}
-            </span>
-            <div className="flex-1">
-              <div className="flex items-center gap-2">
-                <span className="text-sm font-semibold text-white">
-                  {featured.name}
-                </span>
-                <span
-                  className="rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-violet-200"
-                  style={{
-                    backgroundColor: 'rgba(124,58,237,0.18)',
-                    border: '1px solid rgba(159,103,255,0.4)',
-                  }}
-                >
-                  Live
-                </span>
+              Dr. Ahmed Zahra
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 5, fontSize: 9, color: '#CBD5E1' }}>
+              <div style={{ display: 'flex', gap: 6 }}>
+                <span style={{ color: '#8B5CF6' }}>◆</span>Top-rated Histology lecturer
               </div>
-              <p className="mt-0.5 text-[11px] text-text-muted">
-                Dr. Ahmed Zahra · {featured.questionsAnswered}/
-                {featured.questionsAnswered + (11 - featured.questionsAnswered)} questions
-              </p>
-
-              <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-white/5">
-                <motion.div
-                  initial={{ width: 0 }}
-                  animate={{ width: `${featured.progress}%` }}
-                  transition={{ duration: 0.6, ease: 'easeOut' }}
-                  className="h-full rounded-full"
-                  style={{
-                    background:
-                      'linear-gradient(90deg, #7C3AED 0%, #9F67FF 100%)',
-                  }}
-                />
-              </div>
-              <div className="mt-2 flex items-center justify-between text-[11px] text-text-muted">
-                <span>{featured.progress}% complete</span>
-                <span className="inline-flex items-center gap-1 text-violet-200 transition group-hover:translate-x-0.5">
-                  Continue
-                  <ArrowRight className="h-3 w-3" />
-                </span>
+              <div style={{ display: 'flex', gap: 6 }}>
+                <span style={{ color: '#8B5CF6' }}>◆</span>Trusted by Medical Students
               </div>
             </div>
           </div>
-        </button>
-      )}
 
-      <ul className="mt-5 space-y-2">
-        {locked.map((s) => (
-          <li
-            key={s.id}
-            className="flex items-center gap-3 rounded-xl p-3"
+          {/* Doctor photo (the design's image-slot) */}
+          <div
             style={{
-              backgroundColor: '#0A0A12',
-              border: '1px solid #1E1E2E',
-              filter: 'grayscale(0.7)',
+              position: 'relative',
+              zIndex: 2,
+              width: 290,
+              height: 340,
+              borderRadius: 20,
+              overflow: 'hidden',
+              border: '1px solid rgba(139,92,246,0.5)',
+              boxShadow: '0 0 0 1px rgba(124,58,237,0.3), 0 0 50px rgba(124,58,237,0.4)',
             }}
           >
-            <span
-              className="grid h-9 w-9 shrink-0 place-items-center rounded-lg text-lg"
-              style={{ backgroundColor: 'rgba(255,255,255,0.04)' }}
-            >
-              {s.icon}
-            </span>
-            <div className="flex-1">
-              <p className="text-sm font-medium text-text-muted">{s.name}</p>
-              <p className="text-[11px] text-text-muted/70">Coming soon</p>
-            </div>
-            <Lock className="h-3.5 w-3.5 text-text-muted/70" />
-          </li>
-        ))}
-      </ul>
+            <Image
+              src="/dr-zahra.jpg"
+              alt="Dr. Ahmed Zahra"
+              fill
+              priority
+              sizes="290px"
+              style={{ objectFit: 'cover', objectPosition: 'center top' }}
+            />
+          </div>
+        </div>
 
-      <Link
-        href="/student/analytics#bookmarks"
-        className="mt-5 inline-flex w-full items-center justify-center gap-2 rounded-xl py-2.5 text-xs font-medium text-text-muted transition hover:text-white"
-        style={{ border: '1px solid #1E1E2E', backgroundColor: '#0A0A12' }}
+        {/* Hero copy */}
+        <div style={{ position: 'relative' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 11, marginBottom: 20 }}>
+            <span
+              style={{
+                fontSize: 11,
+                fontWeight: 700,
+                letterSpacing: '0.14em',
+                color: '#8B5CF6',
+                textTransform: 'uppercase',
+                border: '1px solid rgba(139,92,246,0.35)',
+                padding: '6px 12px',
+                borderRadius: 7,
+              }}
+            >
+              Exclusive on MedZ
+            </span>
+          </div>
+
+          <h1
+            style={{
+              margin: 0,
+              fontSize: 62,
+              lineHeight: 1.02,
+              fontWeight: 900,
+              letterSpacing: '-0.035em',
+              color: '#F8FAFC',
+            }}
+          >
+            Study <span style={{ color: '#8B5CF6' }}>Histology</span> Now
+          </h1>
+
+          <div
+            style={{
+              fontSize: 22,
+              fontWeight: 700,
+              marginTop: 14,
+              letterSpacing: '-0.01em',
+              color: '#F8FAFC',
+            }}
+          >
+            Dr. Ahmed Zahra&apos;s Exclusive Histology Module
+          </div>
+
+          <p
+            style={{
+              fontSize: 15,
+              color: '#94A3B8',
+              margin: '16px 0 0',
+              maxWidth: 560,
+              lineHeight: 1.6,
+            }}
+          >
+            High-yield questions, detailed explanations, and visual references — all based on
+            Dr.&nbsp;Zahra&apos;s trusted lecture notes.
+          </p>
+
+          {/* Micro-stat row */}
+          <div style={{ display: 'flex', gap: 30, alignItems: 'center', margin: '30px 0 34px' }}>
+            <StatMicro value="450+" label={<>High-Yield<br />Questions</>} big />
+            <Divider />
+            <StatMicro icon="📝" label={<>Detailed<br />Explanations</>} />
+            <Divider />
+            <StatMicro icon="🖼️" label={<>Visual<br />References</>} />
+            <Divider />
+            <StatMicro icon="🎯" label={<>Exam<br />Focused</>} />
+          </div>
+
+          {/* CTAs */}
+          <div style={{ display: 'flex', gap: 14, alignItems: 'center', flexWrap: 'wrap' }}>
+            <button
+              type="button"
+              onClick={onStartHistology}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 12,
+                fontSize: 15,
+                fontWeight: 700,
+                color: '#fff',
+                background: 'linear-gradient(135deg,#7C3AED,#8B5CF6)',
+                padding: '16px 32px',
+                borderRadius: 13,
+                boxShadow: '0 0 30px rgba(124,58,237,0.5)',
+                cursor: 'pointer',
+                border: 'none',
+              }}
+            >
+              Start Learning Histology <span style={{ fontSize: 17 }}>→</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={onViewAnalytics}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 10,
+                fontSize: 15,
+                fontWeight: 700,
+                color: '#C4B5FD',
+                background: 'rgba(124,58,237,0.1)',
+                border: '1px solid rgba(139,92,246,0.45)',
+                padding: '16px 28px',
+                borderRadius: 13,
+                cursor: 'pointer',
+              }}
+            >
+              📊 View My Analytics
+            </button>
+          </div>
+        </div>
+      </section>
+
+      {/* ================= EXPLORE ALL SUBJECTS ================= */}
+      <section style={{ position: 'relative', padding: '34px 44px 30px' }}>
+        <div style={{ textAlign: 'center', marginBottom: 28 }}>
+          <h2 style={{ margin: 0, fontSize: 30, fontWeight: 800, letterSpacing: '-0.02em', color: '#F8FAFC' }}>
+            Explore All Subjects
+          </h2>
+          <div style={{ fontSize: 13, color: '#94A3B8', marginTop: 8 }}>More subjects coming soon</div>
+        </div>
+
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: '1.55fr repeat(5, 1fr)',
+            gap: 16,
+            alignItems: 'stretch',
+          }}
+        >
+          {/* Featured: Histology */}
+          <div
+            style={{
+              position: 'relative',
+              borderRadius: 18,
+              padding: 16,
+              background: 'linear-gradient(165deg,#1c1338,#120f22)',
+              animation: 'medzGlow 3.4s ease-in-out infinite',
+              display: 'flex',
+              flexDirection: 'column',
+              cursor: 'pointer',
+            }}
+            onClick={onStartHistology}
+          >
+            <div
+              style={{
+                position: 'relative',
+                height: 190,
+                borderRadius: 12,
+                overflow: 'hidden',
+                border: '1px solid rgba(139,92,246,0.3)',
+              }}
+            >
+              <Image
+                src="/subjects/histology.webp"
+                alt="Histology"
+                fill
+                sizes="320px"
+                style={{ objectFit: 'cover' }}
+              />
+            </div>
+            <div style={{ marginTop: 16 }}>
+              <div style={{ fontSize: 26, fontWeight: 800, letterSpacing: '-0.02em', color: '#F8FAFC' }}>
+                Histology
+              </div>
+              <div style={{ fontSize: 12, color: '#94A3B8', marginTop: 4 }}>By Dr. Ahmed Zahra</div>
+              <div
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 7,
+                  marginTop: 14,
+                  fontSize: 10,
+                  fontWeight: 700,
+                  letterSpacing: '0.05em',
+                  textTransform: 'uppercase',
+                  color: '#C4B5FD',
+                  border: '1px solid rgba(139,92,246,0.4)',
+                  padding: '6px 11px',
+                  borderRadius: 8,
+                }}
+              >
+                ✦ Exclusive Module
+              </div>
+            </div>
+            <div style={{ marginTop: 'auto', paddingTop: 18, fontSize: 11.5, color: '#CBD5E1' }}>
+              <div style={{ fontWeight: 700, color: '#F8FAFC' }}>450+ High-Yield Questions</div>
+              <div style={{ color: '#94A3B8', marginTop: 4 }}>
+                Detailed Explanations · Visual References · Exam Focused
+              </div>
+            </div>
+          </div>
+
+          {/* Locked subjects */}
+          {LOCKED.map((s) => (
+            <LockedSubjectCard key={s.name} subject={s} />
+          ))}
+        </div>
+      </section>
+
+      {/* ================= FEATURE STRIP ================= */}
+      <section
+        style={{
+          position: 'relative',
+          margin: '26px 44px 40px',
+          padding: '26px 30px',
+          background: 'rgba(255,255,255,0.02)',
+          border: '1px solid rgba(255,255,255,0.06)',
+          borderRadius: 16,
+          display: 'grid',
+          gridTemplateColumns: 'repeat(4,1fr)',
+          gap: 26,
+        }}
       >
-        <Bookmark className="h-3.5 w-3.5" />
-        View bookmarks
-      </Link>
-    </aside>
+        {FEATURES.map((f) => (
+          <div key={f.title} style={{ display: 'flex', gap: 13, alignItems: 'flex-start' }}>
+            <div
+              style={{
+                width: 38,
+                height: 38,
+                borderRadius: 11,
+                background: 'rgba(124,58,237,0.14)',
+                border: '1px solid rgba(139,92,246,0.3)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: 17,
+                flex: 'none',
+              }}
+            >
+              {f.icon}
+            </div>
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: '#F8FAFC' }}>{f.title}</div>
+              <div style={{ fontSize: 11, color: '#94A3B8', marginTop: 3, lineHeight: 1.4 }}>{f.sub}</div>
+            </div>
+          </div>
+        ))}
+      </section>
+    </>
   );
 }
 
-function EmptyChartCard() {
+// =============================================================
+// ANALYTICS VIEW — KPIs + accuracy trend + focus areas + recent
+// =============================================================
+
+function AnalyticsView({
+  firstName,
+  stats,
+  loading,
+  onBackToSubjects,
+}: {
+  firstName: string;
+  stats: StudentStats | null;
+  loading: boolean;
+  onBackToSubjects: () => void;
+}) {
+  const empty = getEmptyStudentStats();
+  const s = stats ?? empty;
+
+  // Compose KPI tiles from real per-student numbers. Formatting is
+  // done here (not on the API) so the source-of-truth values on
+  // the wire stay unambiguous numeric types.
+  const kpis: Array<{
+    label: string;
+    value: string;
+    suffix?: string;
+    hint: string;
+    color: string;
+  }> = [
+    {
+      label: 'Total Questions',
+      value: loading ? '—' : s.totalQuestionsAnswered.toLocaleString(),
+      hint: 'Across all sessions',
+      color: '#F8FAFC',
+    },
+    {
+      label: 'Correct Answers',
+      value: loading ? '—' : s.totalCorrectAnswers.toLocaleString(),
+      hint: 'Cumulative correct',
+      color: '#10B981',
+    },
+    {
+      label: 'Overall Accuracy',
+      value: loading ? '—' : s.overallAccuracy.toFixed(1),
+      suffix: loading ? '' : '%',
+      hint: 'Weighted mean',
+      color: '#F8FAFC',
+    },
+    {
+      label: 'Study Streak',
+      value: loading ? '—' : String(s.streakDays),
+      suffix: loading ? '' : ' 🔥',
+      hint: 'Consecutive days',
+      color: '#F97316',
+    },
+  ];
+
   return (
     <section
-      className="rounded-2xl p-6"
-      style={{ backgroundColor: '#0F0F1A', border: '1px solid #1E1E2E' }}
+      style={{
+        position: 'relative',
+        padding: '40px 44px 54px',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 22,
+      }}
     >
-      <div>
-        <p className="text-[10px] uppercase tracking-[0.22em] text-violet-300">
-          Accuracy
-        </p>
-        <h2 className="mt-0.5 text-base font-semibold tracking-tight text-white">
-          Accuracy over time
-        </h2>
-        <p className="mt-0.5 text-xs text-text-muted">
-          Your chart populates as you complete sessions.
-        </p>
+      {/* Header */}
+      <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 20 }}>
+        <div>
+          <div style={{ fontSize: 11, fontWeight: 600, color: '#8B5CF6', letterSpacing: '0.03em', marginBottom: 6 }}>
+            Student Analytics
+          </div>
+          <h2 style={{ margin: 0, fontSize: 30, fontWeight: 800, letterSpacing: '-0.025em', color: '#F8FAFC' }}>
+            Your Progress, {firstName}
+          </h2>
+          <p style={{ margin: '8px 0 0', fontSize: 13, color: '#94A3B8' }}>
+            Every metric below is drawn from your completed challenges.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onBackToSubjects}
+          style={{
+            fontSize: 12.5,
+            fontWeight: 600,
+            color: '#C4B5FD',
+            border: '1px solid rgba(139,92,246,0.4)',
+            padding: '10px 16px',
+            borderRadius: 10,
+            cursor: 'pointer',
+            whiteSpace: 'nowrap',
+            background: 'transparent',
+          }}
+        >
+          ← Back to Subjects
+        </button>
       </div>
-      <div
-        className="mt-6 grid h-56 place-items-center rounded-xl"
-        style={{ border: '1px dashed #1E1E2E' }}
-      >
-        <p className="text-sm text-text-muted">
-          No history yet — finish a challenge to seed the chart.
-        </p>
+
+      {/* KPI grid */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 16 }}>
+        {kpis.map((k) => (
+          <div
+            key={k.label}
+            style={{
+              background: '#12111C',
+              border: '1px solid rgba(255,255,255,0.07)',
+              borderRadius: 16,
+              padding: 20,
+            }}
+          >
+            <div style={{ fontSize: 11, color: '#94A3B8' }}>{k.label}</div>
+            <div
+              style={{
+                fontSize: 30,
+                fontWeight: 800,
+                marginTop: 8,
+                letterSpacing: '-0.02em',
+                color: k.color,
+              }}
+            >
+              {k.value}
+              {k.suffix && (
+                <span style={{ fontSize: 16, color: '#94A3B8', fontWeight: 700 }}>{k.suffix}</span>
+              )}
+            </div>
+            <div style={{ fontSize: 10, color: '#64748B', marginTop: 6 }}>{k.hint}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Trend + Focus areas */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 340px', gap: 22, alignItems: 'start' }}>
+        <AccuracyTrend history={s.progressHistory} loading={loading} />
+        <FocusAreas />
+      </div>
+
+      {/* Recent challenges */}
+      <div style={{ background: '#12111C', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 16, padding: 22 }}>
+        <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 16, color: '#F8FAFC' }}>Recent Challenges</div>
+        <RecentChallenges challenges={s.recentChallenges} loading={loading} />
       </div>
     </section>
   );
 }
 
-function formatRelative(iso: string): string {
-  const date = new Date(iso);
+// =============================================================
+// AnalyticsView children — one component per card so the fetch
+// state + empty state stay local to what they gate.
+// =============================================================
+
+function AccuracyTrend({ history, loading }: { history: ProgressDataPoint[]; loading: boolean }) {
+  // Build the polyline path from real accuracy points. Fixed viewBox
+  // width 640, height 200, top/bottom padding 12px so the line
+  // doesn't clip against the frame at 0%/100%.
+  const W = 640;
+  const H = 200;
+  const PAD_Y = 12;
+
+  const path = (() => {
+    if (history.length < 2) return null;
+    const usable = H - 2 * PAD_Y;
+    const stepX = W / (history.length - 1);
+    return history
+      .map((p, i) => {
+        const x = i * stepX;
+        // accuracy is 0..100, invert to SVG coords (0 is top).
+        const y = PAD_Y + (1 - Math.max(0, Math.min(100, p.accuracy)) / 100) * usable;
+        return `${i === 0 ? 'M' : 'L'}${x.toFixed(1)},${y.toFixed(1)}`;
+      })
+      .join(' ');
+  })();
+
+  const areaPath = path ? `${path} L${W},${H} L0,${H} Z` : null;
+
+  // Compute the header delta from the first and last progress
+  // points. Positive → green, negative → red, no data → blank.
+  const delta = history.length >= 2
+    ? Number((history[history.length - 1].accuracy - history[0].accuracy).toFixed(1))
+    : null;
+
+  const firstLabel = history[0]?.date ?? '';
+  const lastLabel = history[history.length - 1]?.date ?? '';
+
+  return (
+    <div style={{ background: '#12111C', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 16, padding: 22 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 }}>
+        <div>
+          <div style={{ fontSize: 15, fontWeight: 600, color: '#F8FAFC' }}>Accuracy Trend</div>
+          <div style={{ fontSize: 11, color: '#94A3B8', marginTop: 3 }}>Last 30 days</div>
+        </div>
+        {delta !== null && (
+          <div
+            style={{
+              fontSize: 11,
+              color: delta >= 0 ? '#10B981' : '#EF4444',
+              fontWeight: 600,
+              background: delta >= 0 ? 'rgba(16,185,129,0.12)' : 'rgba(239,68,68,0.12)',
+              padding: '4px 10px',
+              borderRadius: 6,
+            }}
+          >
+            {delta >= 0 ? '▲' : '▼'} {Math.abs(delta)}%
+          </div>
+        )}
+      </div>
+
+      {path ? (
+        <>
+          <svg viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', height: 200, display: 'block' }} preserveAspectRatio="none">
+            <defs>
+              <linearGradient id="homeArea" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor="#7C3AED" stopOpacity="0.45" />
+                <stop offset="100%" stopColor="#7C3AED" stopOpacity="0" />
+              </linearGradient>
+            </defs>
+            <line x1="0" y1="50" x2={W} y2="50" stroke="rgba(255,255,255,0.05)" />
+            <line x1="0" y1="100" x2={W} y2="100" stroke="rgba(255,255,255,0.05)" />
+            <line x1="0" y1="150" x2={W} y2="150" stroke="rgba(255,255,255,0.05)" />
+            {areaPath && <path d={areaPath} fill="url(#homeArea)" />}
+            <path d={path} fill="none" stroke="#8B5CF6" strokeWidth="2.5" />
+          </svg>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: '#64748B', marginTop: 8 }}>
+            <span>{firstLabel}</span>
+            <span>{lastLabel}</span>
+          </div>
+        </>
+      ) : (
+        <div
+          style={{
+            height: 200,
+            display: 'grid',
+            placeItems: 'center',
+            fontSize: 12,
+            color: '#64748B',
+            textAlign: 'center',
+            padding: '0 20px',
+            lineHeight: 1.5,
+          }}
+        >
+          {loading
+            ? 'Loading your accuracy trend…'
+            : 'Take at least two histology quizzes to see your accuracy trend.'}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function FocusAreas() {
+  // Per-topic accuracy isn't in the /api/student/stats response
+  // yet — it needs question-level rollups that aren't materialized.
+  // Show an honest empty state instead of fabricated weak topics.
+  return (
+    <div style={{ background: '#12111C', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 16, padding: 22 }}>
+      <div style={{ fontSize: 15, fontWeight: 600, color: '#F8FAFC' }}>Focus Areas</div>
+      <div style={{ fontSize: 11, color: '#94A3B8', marginTop: 3, marginBottom: 16 }}>
+        Weakest topics — review before exam
+      </div>
+      <div
+        style={{
+          minHeight: 148,
+          display: 'grid',
+          placeItems: 'center',
+          fontSize: 12,
+          color: '#64748B',
+          textAlign: 'center',
+          padding: '0 8px',
+          lineHeight: 1.5,
+        }}
+      >
+        Topic-level breakdown will appear here once per-topic accuracy is tracked.
+      </div>
+    </div>
+  );
+}
+
+function RecentChallenges({ challenges, loading }: { challenges: ChallengeResult[]; loading: boolean }) {
+  if (loading) {
+    return <div style={{ fontSize: 12, color: '#64748B' }}>Loading recent challenges…</div>;
+  }
+  if (challenges.length === 0) {
+    return (
+      <div style={{ fontSize: 12, color: '#64748B' }}>
+        No completed challenges yet — take a histology quiz to see it here.
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column' }}>
+      {challenges.map((c) => {
+        const pct = Math.round(c.accuracy);
+        const { color, tag, tagBg } = challengeTone(pct);
+        return (
+          <div
+            key={c.id}
+            style={{
+              display: 'grid',
+              gridTemplateColumns: '1fr auto auto auto',
+              alignItems: 'center',
+              gap: 20,
+              padding: '13px 0',
+              borderTop: '1px solid rgba(255,255,255,0.06)',
+            }}
+          >
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 600, color: '#F8FAFC' }}>{c.subjectName}</div>
+              <div style={{ fontSize: 10, color: '#64748B', marginTop: 2 }}>{relativeTime(c.completedAt)}</div>
+            </div>
+            <div style={{ fontFamily: 'ui-monospace,Menlo,monospace', fontSize: 12, color: '#94A3B8' }}>
+              {c.score} / {c.total}
+            </div>
+            <div style={{ fontSize: 12, fontWeight: 700, minWidth: 52, textAlign: 'right', color }}>{pct}%</div>
+            <div
+              style={{
+                fontSize: 9,
+                fontWeight: 700,
+                letterSpacing: '0.06em',
+                textTransform: 'uppercase',
+                color,
+                background: tagBg,
+                padding: '4px 9px',
+                borderRadius: 6,
+              }}
+            >
+              {tag}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// Threshold table for the accuracy pill. Matches the design's
+// green / orange / red palette.
+function challengeTone(pct: number): { color: string; tag: string; tagBg: string } {
+  if (pct >= 80) return { color: '#10B981', tag: 'Great',  tagBg: 'rgba(16,185,129,0.12)' };
+  if (pct >= 60) return { color: '#F97316', tag: 'Review', tagBg: 'rgba(249,115,22,0.12)' };
+  return           { color: '#EF4444', tag: 'Weak',   tagBg: 'rgba(239,68,68,0.12)'  };
+}
+
+// "Today, 2:14 PM" / "Yesterday" / "3 days ago" — matches the
+// old mock's copy pattern so the layout doesn't shift.
+function relativeTime(iso: string): string {
+  const then = new Date(iso);
   const now = new Date();
-  const diffMs = now.getTime() - date.getTime();
+  const diffMs = now.getTime() - then.getTime();
   const diffDays = Math.floor(diffMs / 86400000);
-  if (diffDays === 0) return 'Today';
+
+  if (diffDays === 0) {
+    const h = then.getHours() % 12 || 12;
+    const m = then.getMinutes().toString().padStart(2, '0');
+    const ampm = then.getHours() >= 12 ? 'PM' : 'AM';
+    return `Today, ${h}:${m} ${ampm}`;
+  }
   if (diffDays === 1) return 'Yesterday';
-  if (diffDays < 7) return `${diffDays}d ago`;
-  return date.toLocaleDateString();
+  if (diffDays < 7) return `${diffDays} days ago`;
+  return then.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+// =============================================================
+// Small helpers
+// =============================================================
+
+function StatMicro({
+  value,
+  icon,
+  label,
+  big,
+}: {
+  value?: string;
+  icon?: string;
+  label: React.ReactNode;
+  big?: boolean;
+}) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+      {value && (
+        <span style={{ fontSize: big ? 24 : 19, fontWeight: 900, color: '#8B5CF6' }}>
+          {value}
+        </span>
+      )}
+      {icon && <span style={{ fontSize: 19 }}>{icon}</span>}
+      <span style={{ fontSize: 11, color: '#94A3B8', lineHeight: 1.3 }}>{label}</span>
+    </div>
+  );
+}
+
+function Divider() {
+  return <div style={{ width: 1, height: 34, background: 'rgba(255,255,255,0.12)' }} />;
+}
+
+function LockedSubjectCard({ subject }: { subject: LockedSubject }) {
+  return (
+    <div
+      style={{
+        borderRadius: 16,
+        padding: 14,
+        background: '#12111C',
+        border: '1px solid rgba(255,255,255,0.07)',
+        display: 'flex',
+        flexDirection: 'column',
+      }}
+    >
+      <div
+        style={{
+          height: 118,
+          borderRadius: 11,
+          overflow: 'hidden',
+          border: '1px solid rgba(255,255,255,0.06)',
+          position: 'relative',
+        }}
+      >
+        <Image
+          src={subject.image}
+          alt={subject.name}
+          fill
+          sizes="180px"
+          style={{ objectFit: 'cover' }}
+        />
+        {/* Color-coded overlay preserves each subject's visual
+            identity (was the emoji tint) and softens the image
+            just enough to signal "coming soon". */}
+        <div
+          aria-hidden
+          style={{
+            position: 'absolute',
+            inset: 0,
+            background: `linear-gradient(135deg, ${subject.gradientFrom}, ${subject.gradientTo})`,
+            mixBlendMode: 'multiply',
+          }}
+        />
+      </div>
+      <div style={{ marginTop: 13, flex: 1 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
+          <div style={{ fontSize: 15, fontWeight: 700, color: '#F8FAFC' }}>{subject.name}</div>
+          <span style={{ fontSize: 11, color: '#64748B' }}>🔒</span>
+        </div>
+        <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.04em', color: '#8B5CF6', marginTop: 3 }}>
+          Coming Soon
+        </div>
+      </div>
+      <div style={{ marginTop: 12, fontSize: 10.5, color: '#94A3B8', lineHeight: 1.5 }}>
+        High-Yield Questions
+        <br />
+        Detailed Explanations
+      </div>
+    </div>
+  );
 }

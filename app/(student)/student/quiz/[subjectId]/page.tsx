@@ -39,7 +39,7 @@ import {
   X,
 } from 'lucide-react';
 import { useQuizStore } from '@/lib/store';
-import { isDemoMode } from '@/lib/supabase';
+import { isDemoMode } from '@/lib/demo-profile';
 import {
   histologyQuestions,
   histologySubject,

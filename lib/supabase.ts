@@ -42,14 +42,20 @@ import type { NextRequest, NextResponse } from 'next/server';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? '';
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? '';
+const demoFlag = process.env.NEXT_PUBLIC_DEMO === '1';
 
-if (!supabaseUrl || !supabaseAnonKey) {
-  // Surface the misconfiguration early so login/signup don't fail mysteriously.
-  // The literal warning runs once per server boot.
+if ((!supabaseUrl || !supabaseAnonKey) && !demoFlag) {
+  // Not in explicit demo mode and Supabase creds are missing: fail
+  // loud. A silent fallback to localStorage-auth is exactly the
+  // kind of misconfiguration that ships to prod unnoticed.
+  const message =
+    '[MedZ] Missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY. ' +
+    'Copy .env.local.example, or set NEXT_PUBLIC_DEMO=1 to run in demo mode.';
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error(message);
+  }
   // eslint-disable-next-line no-console
-  console.warn(
-    '[MedZ] Missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY — copy .env.local.example.'
-  );
+  console.warn(message);
 }
 
 export const supabase: SupabaseClient = createClient(supabaseUrl, supabaseAnonKey, {
@@ -60,14 +66,31 @@ export const supabase: SupabaseClient = createClient(supabaseUrl, supabaseAnonKe
   },
 });
 
-export const createBrowserClient = () => createClientComponentClient<Database>();
+// Cache the browser client across React renders. `createClientComponentClient`
+// creates a fresh Supabase client object every call, which invalidates
+// referential-equality checks in `useEffect` deps and can cause repeated
+// auth-state subscriptions. One process-wide instance is fine — the client
+// reads its session from cookies on demand, so there is no state to reset.
+let browserClient: ReturnType<typeof createClientComponentClient<Database>> | null = null;
+export const createBrowserClient = () => {
+  if (typeof window === 'undefined') {
+    // Server render / RSC — always mint a fresh client (do not cache
+    // in module scope because there is no per-request isolation).
+    return createClientComponentClient<Database>();
+  }
+  if (!browserClient) {
+    browserClient = createClientComponentClient<Database>();
+  }
+  return browserClient;
+};
 
 export const createMiddlewareSupabase = (
   req: NextRequest,
   res: NextResponse
 ) => createMiddlewareClient<Database>({ req, res });
 
-export type UserRole = 'student' | 'professor' | 'admin';
+export type { UserRole } from '@/lib/demo-profile';
+import type { UserRole } from '@/lib/demo-profile';
 
 export type Profile = {
   id: string;
@@ -207,63 +230,17 @@ export type Database = {
   };
 };
 
-export const ROLE_DASHBOARD: Record<UserRole, string> = {
-  student: '/student/dashboard',
-  professor: '/professor/dashboard',
-  admin: '/admin/dashboard',
-};
-
-export function dashboardPathForRole(role: UserRole | null | undefined) {
-  if (!role) return '/login';
-  return ROLE_DASHBOARD[role] ?? '/login';
-}
-
-/**
- * Demo mode: when no real Supabase project is configured, the app stores
- * the "profile" in localStorage and the middleware lets everything through.
- * Lets reviewers click through the UI without provisioning a backend.
- */
-export function isDemoMode(): boolean {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? '';
-  if (!url || !url.startsWith('https://')) return true;
-  return /demo|placeholder|example|your-supabase/i.test(url);
-}
-
-export const DEMO_PROFILE_KEY = 'medz-demo-profile';
-
-export type DemoProfile = {
-  id: string;
-  full_name: string;
-  email: string;
-  role: UserRole;
-};
-
-export function readDemoProfile(): DemoProfile | null {
-  if (typeof window === 'undefined') return null;
-  try {
-    const raw = window.localStorage.getItem(DEMO_PROFILE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as DemoProfile;
-    if (!parsed || !parsed.role) return null;
-    return parsed;
-  } catch {
-    return null;
-  }
-}
-
-export function writeDemoProfile(profile: DemoProfile) {
-  if (typeof window === 'undefined') return;
-  window.localStorage.setItem(DEMO_PROFILE_KEY, JSON.stringify(profile));
-}
-
-export function clearDemoProfile() {
-  if (typeof window === 'undefined') return;
-  window.localStorage.removeItem(DEMO_PROFILE_KEY);
-}
-
-export function inferRoleFromEmail(email: string): UserRole {
-  const lower = email.toLowerCase();
-  if (/\b(admin|ops|director)\b/.test(lower)) return 'admin';
-  if (/\b(prof|professor|faculty|dr|teach|instructor)\b/.test(lower)) return 'professor';
-  return 'student';
-}
+// Re-exports for backward compatibility. Prefer importing directly
+// from '@/lib/demo-profile' — that path has zero supabase-js deps,
+// which lets webpack tree-shake the ~90 KB @supabase/* module tree
+// out of routes that only need the demo helpers.
+export {
+  dashboardPathForRole,
+  isDemoMode,
+  readDemoProfile,
+  writeDemoProfile,
+  clearDemoProfile,
+  inferRoleFromEmail,
+  DEMO_PROFILE_KEY,
+  type DemoProfile,
+} from '@/lib/demo-profile';

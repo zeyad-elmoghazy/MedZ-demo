@@ -18,6 +18,9 @@ export const metadata: Metadata = {
   title: 'MedZ — Adaptive medical learning',
   description:
     'MedZ is an adaptive question bank, lecture archive, and analytics suite for medical students, professors, and program administrators.',
+  icons: {
+    icon: '/favicon.png',
+  },
 };
 
 export default function RootLayout({

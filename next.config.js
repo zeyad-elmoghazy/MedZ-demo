@@ -69,6 +69,38 @@ const nextConfig = {
   // edge layer also brotli-compresses on top of this in prod).
   compress: true,
 
+  // Modularize barrel imports so `import { Foo } from 'lucide-react'`
+  // pulls just Foo, not every icon in the library. Same for framer /
+  // recharts / radix — huge wins on First Load JS.
+  experimental: {
+    optimizePackageImports: [
+      'lucide-react',
+      'framer-motion',
+      'recharts',
+      '@radix-ui/react-label',
+      '@radix-ui/react-progress',
+      '@radix-ui/react-slot',
+    ],
+  },
+
+  // Drop console.* calls (except errors/warnings) from prod builds.
+  // Saves bytes and eliminates main-thread work from log statements.
+  compiler: {
+    removeConsole:
+      process.env.NODE_ENV === 'production'
+        ? { exclude: ['error', 'warn'] }
+        : false,
+  },
+
+  // Turn off Next's own "Powered-By" header — one fewer byte per
+  // response and one less server signature to fingerprint.
+  poweredByHeader: false,
+
+  // Skip generating source maps in production. Cuts build time and
+  // avoids leaking source files. Re-enable if you need Sentry-style
+  // stack-trace symbolication.
+  productionBrowserSourceMaps: false,
+
   // Optimize images via Vercel's CDN
   images: {
     // remotePatterns is the modern replacement for `domains` — the

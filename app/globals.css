@@ -59,13 +59,6 @@
     border: 1px solid rgba(255, 255, 255, 0.08);
   }
 
-  .gradient-text {
-    background: linear-gradient(120deg, #9F67FF 0%, #7C3AED 50%, #10B981 100%);
-    -webkit-background-clip: text;
-    background-clip: text;
-    -webkit-text-fill-color: transparent;
-  }
-
   .shimmer-bg {
     background: linear-gradient(
       90deg,
@@ -101,20 +94,45 @@
      in tailwind.config.js. */
   @keyframes float {
     0%, 100% { transform: translateY(0px); }
-    50%       { transform: translateY(-12px); }
+    50%       { transform: translateY(-14px); }
   }
 
   @keyframes glowPulse {
     0%, 100% {
-      box-shadow: 0 0 20px #8B5CF6,
-                  0 0 40px rgba(139,92,246,0.3);
+      box-shadow: 0 0 20px rgba(139,92,246,0.2);
     }
-    50%       {
-      box-shadow: 0 0 40px #A855F7,
-                  0 0 80px rgba(168,85,247,0.5);
+    50% {
+      box-shadow: 0 0 50px rgba(168,85,247,0.5),
+                  0 0 100px rgba(168,85,247,0.2);
     }
   }
 
+  @keyframes borderShimmer {
+    0%   { background-position: 0% 50%; }
+    50%  { background-position: 100% 50%; }
+    100% { background-position: 0% 50%; }
+  }
+
+  /* Student-home imported design: pulsing violet halo on the
+     featured (Histology) subject card + slowly-rotating outer
+     ring behind the Dr. Zahra photo. */
+  @keyframes medzGlow {
+    0%, 100% {
+      box-shadow: 0 0 0 1px rgba(124,58,237,0.45),
+                  0 0 30px rgba(124,58,237,0.28);
+    }
+    50% {
+      box-shadow: 0 0 0 1px rgba(139,92,246,0.75),
+                  0 0 46px rgba(124,58,237,0.5);
+    }
+  }
+  @keyframes ringSpin {
+    to { transform: rotate(360deg); }
+  }
+
+  /* Gradient-text shimmer. Named `subjects-shimmer` (not plain
+     `shimmer`) so it never collides with the `shimmer` animation
+     defined in tailwind.config.js. */
   @keyframes subjects-shimmer {
     0%   { background-position: -200% center; }
     100% { background-position: 200% center; }
@@ -162,5 +180,64 @@
     box-shadow:
       0 0 0 1px rgba(124, 58, 237, 0.5),
       0 0 24px rgba(159, 103, 255, 0.35);
+  }
+
+  /* Lightweight fade-in used on auth cards and error banners in
+     place of framer-motion. Pure CSS = ~0 kB vs. ~40 kB gzipped. */
+  @keyframes fade-in-up {
+    from { opacity: 0; transform: translate3d(0, 16px, 0) scale(0.98); }
+    to   { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
+  }
+  .animate-fade-in-up {
+    animation: fade-in-up 0.45s ease-out both;
+    will-change: transform, opacity;
+  }
+
+  @keyframes fade-in-down {
+    from { opacity: 0; transform: translate3d(0, -4px, 0); }
+    to   { opacity: 1; transform: translate3d(0, 0, 0); }
+  }
+  .animate-fade-in-down {
+    animation: fade-in-down 0.3s ease-out both;
+  }
+
+  /* Landing page particles — drift loop on the compositor. Ported
+     from framer-motion.animate={{ x, y, opacity }} so we don't pay
+     the framer-motion runtime on the marketing splash. */
+  @keyframes particle-drift {
+    0%   { transform: translate3d(0, 0, 0);           opacity: 0; }
+    20%  { opacity: var(--p-opacity, 0.3); }
+    50%  { transform: translate3d(var(--p-dx, 20px), var(--p-dy, -20px), 0); opacity: calc(var(--p-opacity, 0.3) * 1.4); }
+    80%  { opacity: var(--p-opacity, 0.3); }
+    100% { transform: translate3d(0, 0, 0);           opacity: 0; }
+  }
+  .particle {
+    position: absolute;
+    border-radius: 9999px;
+    animation: particle-drift var(--p-duration, 18s) ease-in-out infinite;
+    animation-delay: var(--p-delay, 0s);
+    will-change: transform, opacity;
+    filter: blur(0.5px);
+  }
+
+  /* Hero CTA halo — replaces framer boxShadow keyframes. */
+  @keyframes hero-halo {
+    0%, 100% { box-shadow: 0 0 20px #7C3AED; }
+    50%      { box-shadow: 0 0 40px #7C3AED; }
+  }
+  .hero-halo {
+    animation: hero-halo 2s ease-in-out infinite;
+    animation-delay: 0.6s;
+  }
+
+  /* Respect the user's "prefers-reduced-motion" setting for all
+     purely decorative loops introduced above. */
+  @media (prefers-reduced-motion: reduce) {
+    .particle,
+    .hero-halo,
+    .animate-fade-in-up,
+    .animate-fade-in-down {
+      animation: none !important;
+    }
   }
 }
