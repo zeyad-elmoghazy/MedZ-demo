@@ -493,7 +493,7 @@ function SubjectCard({ subject: s }: { subject: SubjectEntry }) {
         <div style={{ marginTop: 15 }}>
           {s.available ? (
             <Link
-              href={`/student/quiz/${s.id}`}
+              href={`/student/subjects/${s.id}`}
               style={{
                 display: 'block',
                 textAlign: 'center',
