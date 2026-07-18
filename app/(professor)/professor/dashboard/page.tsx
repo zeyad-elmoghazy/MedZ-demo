@@ -15,11 +15,37 @@ import {
   type ProfessorStats,
   type ModuleWithChapters,
 } from '@/lib/professor-api';
+import { HISTOLOGY_ACADEMIC_YEARS } from '@/data/histology-catalog';
+
+// Static catalog → demo fallback when /api/professor/modules
+// returns 401 (no DB / no session). ID stability doesn't matter
+// here — Post-Lecture and Mock-Exams panels write to localStorage
+// keyed by their own uuids.
+const DEMO_MODULES: ModuleWithChapters[] = HISTOLOGY_ACADEMIC_YEARS.flatMap((y) =>
+  y.modules.map((m) => ({
+    code: m.code,
+    subject_id: 'histology',
+    name: m.name,
+    year_num: y.yearNum,
+    year_label: y.label,
+    is_active: y.yearNum === '1',
+    chapters: m.chapters.map((c, i) => ({
+      id: `demo-${m.code}-${c.id}`,
+      slug: c.id,
+      name: c.name,
+      ordinal: i + 1,
+      question_count: 0,
+      published_count: 0,
+      flagged_count: 0,
+    })),
+  }))
+);
 import { ProfessorOverview } from '@/components/professor/ProfessorOverview';
 import { UploadWizard } from '@/components/professor/UploadWizard';
 import { QuestionBank } from '@/components/professor/QuestionBank';
 import { StudentRosterPanel } from '@/components/professor/StudentRosterPanel';
-import { ComingSoonTab } from '@/components/professor/ComingSoonTab';
+import { PostLecturePanel } from '@/components/professor/PostLecturePanel';
+import { MockExamsPanel } from '@/components/professor/MockExamsPanel';
 
 type View = 'overview' | 'upload' | 'bank' | 'roster' | 'exams' | 'challenges';
 
@@ -52,9 +78,11 @@ export default function ProfessorDashboardPage() {
   const refreshModules = useCallback(async () => {
     try {
       const { modules: m } = await fetchModules();
-      setModules(m);
+      setModules(m.length > 0 ? m : DEMO_MODULES);
     } catch {
-      // Non-fatal; overview will still render with empty catalog.
+      // 401 in demo mode is expected — seed catalog so
+      // Upload / Post-Lecture / Mock Exams stay usable.
+      setModules(DEMO_MODULES);
     }
   }, []);
 
@@ -456,7 +484,7 @@ export default function ProfessorDashboardPage() {
           </div>
         </header>
 
-        {loadError && (
+        {loadError && !isDemoMode() && (
           <div
             role="alert"
             style={{
@@ -500,28 +528,8 @@ export default function ProfessorDashboardPage() {
           />
         )}
         {view === 'roster' && <StudentRosterPanel />}
-        {view === 'exams' && (
-          <ComingSoonTab
-            title="Mock Exams"
-            description="Timed, auto-graded exams generated from your published question bank."
-            bullets={[
-              'Schedule an exam window students must sit within',
-              'AI-balanced question selection across chapters',
-              'Automatic proctoring with the existing violation feed',
-            ]}
-          />
-        )}
-        {view === 'challenges' && (
-          <ComingSoonTab
-            title="Post-Lecture Challenges"
-            description="A 5-question challenge students take right after a lecture."
-            bullets={[
-              'Release the moment your lecture ends',
-              'Grades feed the student dashboard streak',
-              'Chapter targeting reuses the Question Bank',
-            ]}
-          />
-        )}
+        {view === 'exams' && <MockExamsPanel modules={modules} />}
+        {view === 'challenges' && <PostLecturePanel modules={modules} />}
       </main>
     </div>
   );
