@@ -479,42 +479,39 @@ ON CONFLICT (code) DO NOTHING;
 INSERT INTO chapters (module_code, slug, name, ordinal)
 VALUES
   -- HIST 101
-  ('101', 'the-cell-and-organelles',              'The Cell & Organelles',              1),
-  ('101', 'cell-membrane-and-transport',          'Cell Membrane & Transport',          2),
-  ('101', 'nucleus-and-cell-cycle',               'Nucleus & Cell Cycle',               3),
-  ('101', 'microscopy-and-staining-techniques',   'Microscopy & Staining Techniques',   4),
+  ('101', 'cytology',                             'Cytology',                           1),
+  ('101', 'connective-tissue',                     'Connective Tissue',                  2),
+  ('101', 'epithelium',                            'Epithelium',                         3),
+  ('101', 'blood',                                 'Blood',                              4),
   -- HIST 103
-  ('103', 'covering-epithelium',                  'Covering Epithelium',                1),
-  ('103', 'glandular-epithelium',                 'Glandular Epithelium',               2),
-  ('103', 'connective-tissue-proper',             'Connective Tissue Proper',           3),
-  ('103', 'cartilage',                            'Cartilage',                          4),
-  ('103', 'bone-and-ossification',                'Bone & Ossification',                5),
+  ('103', 'cartilage',                            'Cartilage',                          1),
+  ('103', 'bone',                                 'Bone',                               2),
+  ('103', 'muscle',                               'Muscle',                             3),
+  ('103', 'skin',                                 'Skin',                               4),
   -- HIST 104
-  ('104', 'blood-cells-and-plasma',               'Blood Cells & Plasma',               1),
-  ('104', 'hematopoiesis',                        'Hematopoiesis',                      2),
-  ('104', 'skeletal-muscle',                      'Skeletal Muscle',                    3),
-  ('104', 'cardiac-and-smooth-muscle',            'Cardiac & Smooth Muscle',            4),
+  ('104', 'lymphatics',                           'Lymphatics',                         1),
+  ('104', 'vascular',                             'Vascular',                           2),
+  ('104', 'respiratory',                          'Respiratory',                        3),
+  ('104', 'cytogenetics',                         'Cytogenetics',                       4),
   -- HIST 205
-  ('205', 'neurons-and-neuroglia',                'Neurons & Neuroglia',                1),
-  ('205', 'peripheral-nerves',                    'Peripheral Nerves',                  2),
-  ('205', 'heart-and-conduction-system',          'Heart & Conduction System',          3),
-  ('205', 'blood-vessels',                        'Blood Vessels',                      4),
+  ('205', 'nervous-tissue',                       'Nervous Tissue',                     1),
+  ('205', 'central-nervous-system',                'Central Nervous System',            2),
+  ('205', 'eye',                                  'Eye',                                3),
+  ('205', 'ear',                                  'Ear',                                4),
   -- HIST 206
-  ('206', 'lymph-nodes-and-spleen',               'Lymph Nodes & Spleen',               1),
-  ('206', 'thymus-and-tonsils',                   'Thymus & Tonsils',                   2),
-  ('206', 'pituitary-and-thyroid',                'Pituitary & Thyroid',                3),
-  ('206', 'adrenal-and-pancreatic-islets',        'Adrenal & Pancreatic Islets',        4),
+  ('206', 'digestive-tract',                      'Digestive Tract',                    1),
+  ('206', 'digestive-glands',                     'Digestive Glands',                   2),
+  ('206', 'urinary-system',                       'Urinary System',                     3),
   -- HIST 207
-  ('207', 'upper-and-lower-airways',              'Upper & Lower Airways',              1),
-  ('207', 'lung-and-alveoli',                     'Lung & Alveoli',                     2),
-  ('207', 'git-tube-wall',                        'GIT Tube Wall',                      3),
-  ('207', 'liver-gallbladder-and-pancreas',       'Liver, Gallbladder & Pancreas',      4)
+  ('207', 'endocrine-system',                     'Endocrine System',                   1),
+  ('207', 'male-reproductive-system',             'Male Reproductive System',           2),
+  ('207', 'female-reproductive-system',           'Female Reproductive System',         3)
 ON CONFLICT (module_code, slug) DO NOTHING;
 
 
 -- =============================================================
--- Backfill: attach seeded histology questions to Covering
--- Epithelium chapter so numbers aren't stranded. (The 11 seeded
+-- Backfill: attach seeded histology questions to the Cartilage
+-- chapter so numbers aren't stranded. (The 11 seeded
 -- questions in data/histology-questions.ts have no natural
 -- chapter home — attach them all to the first published chapter
 -- of HIST 103 so professors see them under a real destination.)
@@ -525,7 +522,7 @@ DECLARE
 BEGIN
   SELECT id INTO target_chapter
   FROM chapters
-  WHERE module_code = '103' AND slug = 'covering-epithelium'
+  WHERE module_code = '103' AND slug = 'cartilage'
   LIMIT 1;
 
   IF target_chapter IS NOT NULL THEN
