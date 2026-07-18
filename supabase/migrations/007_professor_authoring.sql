@@ -471,9 +471,9 @@ VALUES
   ('101', 'histology', 'General Histology & The Cell',      '1', 'Preclinical · Foundations', true),
   ('103', 'histology', 'Epithelial & Connective Tissue',    '1', 'Preclinical · Foundations', true),
   ('104', 'histology', 'Blood & Muscle Tissue',             '1', 'Preclinical · Foundations', true),
-  ('205', 'histology', 'Nervous & Cardiovascular Systems',  '2', 'Preclinical · Systems',     false),
-  ('206', 'histology', 'Lymphoid & Endocrine Systems',      '2', 'Preclinical · Systems',     false),
-  ('207', 'histology', 'Respiratory & Digestive Systems',   '2', 'Preclinical · Systems',     false)
+  ('205', 'histology', 'Nervous & Cardiovascular Systems',  '2', 'Preclinical · Systems',     true),
+  ('206', 'histology', 'Lymphoid & Endocrine Systems',      '2', 'Preclinical · Systems',     true),
+  ('207', 'histology', 'Respiratory & Digestive Systems',   '2', 'Preclinical · Systems',     true)
 ON CONFLICT (code) DO NOTHING;
 
 INSERT INTO chapters (module_code, slug, name, ordinal)
