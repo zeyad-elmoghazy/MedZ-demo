@@ -17,6 +17,11 @@ export type Subject = {
   questionsAnswered: number;
   correctAnswers: number;
   challengesCompleted: number;
+  // LIVE published-question count from the DB (chapters
+  // trigger keeps chapters.published_count in sync, and
+  // /api/student/stats sums by subject_id). This is the
+  // number that changes the moment a professor publishes.
+  publishedCount?: number;
 };
 
 export type ChallengeResult = {

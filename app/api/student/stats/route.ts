@@ -73,12 +73,43 @@ export async function GET() {
 
   const thirtyDaysAgo = new Date(Date.now() - 30 * 86400000).toISOString();
 
+  // Live per-subject published question count — sums the
+  // chapters.published_count column that the professor
+  // authoring trigger maintains. Reading it here means the
+  // student dashboard sees a new number the moment a
+  // professor publishes a question (once the cache expires).
+  //
+  // Shape: modules.subject_id + JOIN chapters. We fetch both
+  // and sum client-side to keep the query below trivial.
+  const modulesForCountsPromise = (supabase as unknown as {
+    from: (t: string) => {
+      select: (c: string) => Promise<{
+        data: Array<{ code: string; subject_id: string }> | null;
+        error: { message: string } | null;
+      }>;
+    };
+  })
+    .from('modules')
+    .select('code, subject_id');
+  const chaptersForCountsPromise = (supabase as unknown as {
+    from: (t: string) => {
+      select: (c: string) => Promise<{
+        data: Array<{ module_code: string; published_count: number }> | null;
+        error: { message: string } | null;
+      }>;
+    };
+  })
+    .from('chapters')
+    .select('module_code, published_count');
+
   const [
     subjectStatsRes,
     recentSessionsRes,
     progressSessionsRes,
     streakRes,
     bookmarksRes,
+    modulesForCountsRes,
+    chaptersForCountsRes,
   ] = await Promise.all([
     // (b/c) per-subject aggregates — also feeds the overall totals
     supabase
@@ -116,7 +147,25 @@ export async function GET() {
       .from('bookmarks')
       .select('id', { count: 'exact', head: true })
       .eq('student_id', user.id),
+
+    // (h + i) live per-subject published-question count.
+    modulesForCountsPromise,
+    chaptersForCountsPromise,
   ]);
+
+  // Aggregate published_count by subject.
+  const publishedBySubject = new Map<string, number>();
+  const modulesForCounts = modulesForCountsRes.data ?? [];
+  const chaptersForCounts = chaptersForCountsRes.data ?? [];
+  for (const mod of modulesForCounts) {
+    const total = chaptersForCounts
+      .filter((c) => c.module_code === mod.code)
+      .reduce((sum, c) => sum + (Number(c.published_count) || 0), 0);
+    publishedBySubject.set(
+      mod.subject_id,
+      (publishedBySubject.get(mod.subject_id) ?? 0) + total
+    );
+  }
 
   if (subjectStatsRes.error) {
     return NextResponse.json(
@@ -175,13 +224,20 @@ export async function GET() {
 
   // Merge real per-subject numbers into the static SUBJECTS_CONFIG so
   // subjects with no sessions yet still appear with zeroed metrics.
+  // publishedCount is the LIVE number kept up-to-date by the professor
+  // authoring trigger — this is the sync signal.
   const subjects: Subject[] = SUBJECTS_CONFIG.map((config) => {
     const real = subjectStats.find((s) => s.subject_id === config.id);
-    if (!real) return config;
+    const publishedCount = publishedBySubject.get(config.id) ?? 0;
+    const base = {
+      ...config,
+      publishedCount,
+    };
+    if (!real) return base;
 
     const accuracy = Math.round(real.avg_accuracy * 10) / 10;
     return {
-      ...config,
+      ...base,
       accuracy,
       questionsAnswered: real.total_answered,
       correctAnswers: real.total_correct,

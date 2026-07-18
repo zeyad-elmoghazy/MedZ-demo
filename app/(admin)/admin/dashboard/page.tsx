@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import dynamic from 'next/dynamic';
 import { useRouter, usePathname } from 'next/navigation';
@@ -37,6 +37,56 @@ import {
   Zap,
 } from 'lucide-react';
 import { clearDemoProfile, createBrowserClient, isDemoMode } from '@/lib/supabase';
+
+type AdminOverview = {
+  counts: {
+    professors: number;
+    students: number;
+    published_questions: number;
+    total_questions: number;
+    under_review: number;
+    draft: number;
+    flagged: number;
+  };
+  professors: Array<{
+    id: string;
+    full_name: string | null;
+    email: string | null;
+    joined_at: string;
+    stats: {
+      draft: number;
+      under_review: number;
+      published: number;
+      archived: number;
+      flagged: number;
+      last_activity: string | null;
+    };
+  }>;
+  subjects: Array<{
+    subject_id: string;
+    module_count: number;
+    question_count: number;
+    published_count: number;
+    professor_count: number;
+  }>;
+  recent_uploads: Array<{
+    id: string;
+    professor_name: string;
+    module_code: string | null;
+    method: string;
+    status: string;
+    questions_extracted: number;
+    questions_under_review: number;
+    created_at: string;
+  }>;
+  recent_published: Array<{
+    id: number;
+    professor_name: string;
+    subject_id: string;
+    question_preview: string;
+    created_at: string;
+  }>;
+};
 import { cn } from '@/lib/utils';
 
 // Recharts + its d3-* deps weigh ~100KB gzipped. Defer that cost
@@ -156,6 +206,47 @@ export default function AdminDashboardPage() {
 
   const [users, setUsers] = useState<UserRow[]>(INITIAL_USERS);
   const [subjects, setSubjects] = useState<SubjectRow[]>(INITIAL_SUBJECTS);
+  // Live overview from the DB — populated by /api/admin/overview
+  // when the admin is authenticated against a real Supabase. In
+  // demo mode this stays null and the page renders the seeded
+  // INITIAL_* fixtures (never confused with fake DB numbers).
+  const [overview, setOverview] = useState<AdminOverview | null>(null);
+
+  useEffect(() => {
+    if (isDemoMode()) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/admin/overview', {
+          credentials: 'include',
+          cache: 'no-store',
+        });
+        if (!res.ok) return;
+        const body = (await res.json()) as AdminOverview;
+        if (!cancelled) setOverview(body);
+      } catch {
+        /* silent — page still renders with fixtures */
+      }
+    })();
+    // Poll — matches the 30 s Cache-Control on the endpoint so
+    // an admin sees new professor activity within a minute.
+    const iv = window.setInterval(async () => {
+      if (cancelled || isDemoMode()) return;
+      try {
+        const res = await fetch('/api/admin/overview', {
+          credentials: 'include',
+          cache: 'no-store',
+        });
+        if (res.ok) setOverview((await res.json()) as AdminOverview);
+      } catch {
+        /* keep last successful value */
+      }
+    }, 30000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(iv);
+    };
+  }, []);
   const [editingSubjectId, setEditingSubjectId] = useState<number | null>(null);
   const [editingDraft, setEditingDraft] = useState('');
   const [addingSubject, setAddingSubject] = useState(false);
@@ -170,14 +261,29 @@ export default function AdminDashboardPage() {
     setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 2800);
   }
 
+  // Live if overview loaded (real DB); fixture otherwise (demo /
+  // unauth). This is the only source of truth for the KPI row and
+  // any panel that reads `stats.*`.
   const stats = useMemo(() => {
+    if (overview) {
+      return {
+        total: overview.counts.professors + overview.counts.students,
+        activeStudents: overview.counts.students,
+        professors: overview.counts.professors,
+        questionsInBank: overview.counts.published_questions,
+        underReview: overview.counts.under_review,
+        flagged: overview.counts.flagged,
+      };
+    }
     return {
       total: 1247,
       activeStudents: 1189,
       professors: 12,
       questionsInBank: 450,
+      underReview: 12,
+      flagged: 2,
     };
-  }, []);
+  }, [overview]);
 
   function toggleStatus(id: number) {
     setUsers((prev) =>
@@ -323,10 +429,10 @@ export default function AdminDashboardPage() {
 
           <FadeUp className="mt-8">
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-              <StatCard label="Total Users" value="1,247" icon={<UsersRound className="h-4 w-4" />} accent="#9F67FF" hint="+38 this week" />
-              <StatCard label="Active Students" value="1,189" icon={<Users className="h-4 w-4" />} accent="#10B981" hint="95% of base" />
-              <StatCard label="Professors" value="12" icon={<GraduationCap className="h-4 w-4" />} accent="#9F67FF" hint="+1 pending" />
-              <StatCard label="Questions in Bank" value="450" icon={<ListChecks className="h-4 w-4" />} accent="#F59E0B" hint="12 under review" />
+              <StatCard label="Total Users" value={stats.total.toLocaleString()} icon={<UsersRound className="h-4 w-4" />} accent="#9F67FF" hint={overview ? 'from Supabase' : 'demo fixture'} />
+              <StatCard label="Active Students" value={stats.activeStudents.toLocaleString()} icon={<Users className="h-4 w-4" />} accent="#10B981" hint={stats.total > 0 ? `${Math.round((stats.activeStudents / stats.total) * 100)}% of base` : ''} />
+              <StatCard label="Professors" value={String(stats.professors)} icon={<GraduationCap className="h-4 w-4" />} accent="#9F67FF" hint={overview ? 'live count' : '+1 pending'} />
+              <StatCard label="Questions in Bank" value={stats.questionsInBank.toLocaleString()} icon={<ListChecks className="h-4 w-4" />} accent="#F59E0B" hint={`${stats.underReview} under review`} />
             </div>
           </FadeUp>
 
@@ -342,6 +448,11 @@ export default function AdminDashboardPage() {
               <FadeUp>
                 <ActivityFeedPanel />
               </FadeUp>
+              {overview && (
+                <FadeUp>
+                  <ProfessorActivityPanel overview={overview} />
+                </FadeUp>
+              )}
             </div>
 
             <div className="flex flex-col gap-6">
@@ -816,6 +927,166 @@ function ActivityFeedPanel() {
           );
         })}
       </ol>
+    </section>
+  );
+}
+
+// -----------------------------------------------------------
+// ProfessorActivityPanel — the "admin sees what professors are
+// doing" surface. Renders three lists from a single API call:
+//   • Per-professor authoring stats (draft / review / published
+//     / flagged) — one row per professor.
+//   • Recent upload_jobs (both manual and AI paths land here).
+//   • Recent published questions.
+// Only rendered when the live overview API is reachable; demo
+// mode falls back to the seeded ACTIVITY_FEED above.
+// -----------------------------------------------------------
+function ProfessorActivityPanel({ overview }: { overview: AdminOverview }) {
+  const rel = (iso: string) => {
+    const diffMs = Date.now() - new Date(iso).getTime();
+    const min = Math.floor(diffMs / 60000);
+    if (min < 1) return 'just now';
+    if (min < 60) return `${min} min ago`;
+    const hr = Math.floor(min / 60);
+    if (hr < 24) return `${hr}h ago`;
+    return `${Math.floor(hr / 24)}d ago`;
+  };
+  return (
+    <section
+      id="professors"
+      className="rounded-2xl p-6 lg:p-7"
+      style={{ backgroundColor: '#0F0F1A', border: '1px solid #1E1E2E' }}
+    >
+      <div className="flex items-baseline justify-between">
+        <div>
+          <p className="text-[10px] uppercase tracking-[0.22em] text-violet-300">
+            Live · Supabase
+          </p>
+          <h2 className="mt-0.5 text-base font-semibold tracking-tight text-white">
+            Professor authoring
+          </h2>
+        </div>
+        <span className="text-xs text-text-muted">
+          {overview.professors.length} professor
+          {overview.professors.length === 1 ? '' : 's'}
+        </span>
+      </div>
+
+      {/* Per-professor stats */}
+      <div className="mt-5 space-y-2">
+        {overview.professors.length === 0 && (
+          <p className="text-xs text-text-muted">
+            No professors have joined yet.
+          </p>
+        )}
+        {overview.professors.map((p) => (
+          <div
+            key={p.id}
+            className="rounded-xl p-3"
+            style={{ backgroundColor: '#0A0A12', border: '1px solid #1E1E2E' }}
+          >
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <p className="truncate text-sm font-medium text-white">
+                  {p.full_name ?? p.email ?? 'Unnamed professor'}
+                </p>
+                <p className="truncate text-[11px] text-text-muted">{p.email}</p>
+              </div>
+              <div className="flex flex-none gap-3 text-[11px]">
+                <span title="Published" style={{ color: '#10B981' }}>
+                  {p.stats.published}✓
+                </span>
+                <span title="Under review" style={{ color: '#0EA5E9' }}>
+                  {p.stats.under_review}○
+                </span>
+                <span title="Drafts" style={{ color: '#94A3B8' }}>
+                  {p.stats.draft}✎
+                </span>
+                <span
+                  title="Flagged"
+                  style={{ color: p.stats.flagged > 0 ? '#EF4444' : '#475569' }}
+                >
+                  ⚑{p.stats.flagged}
+                </span>
+              </div>
+            </div>
+            {p.stats.last_activity && (
+              <p className="mt-1 text-[10px] uppercase tracking-[0.16em] text-text-muted">
+                Last change {rel(p.stats.last_activity)}
+              </p>
+            )}
+          </div>
+        ))}
+      </div>
+
+      {/* Recent upload jobs */}
+      {overview.recent_uploads.length > 0 && (
+        <>
+          <p className="mt-6 text-[10px] uppercase tracking-[0.22em] text-violet-300">
+            Recent uploads
+          </p>
+          <ul className="mt-2 space-y-1.5">
+            {overview.recent_uploads.slice(0, 5).map((u) => (
+              <li
+                key={u.id}
+                className="rounded-lg px-3 py-2 text-[11.5px]"
+                style={{
+                  backgroundColor: '#0A0A12',
+                  border: '1px solid #1E1E2E',
+                }}
+              >
+                <span style={{ color: '#F8FAFC' }}>{u.professor_name}</span>
+                <span className="text-text-muted"> · {u.method} ·</span>{' '}
+                <span style={{ color: '#C4B5FD' }}>HIST {u.module_code ?? '?'}</span>
+                <span className="text-text-muted">
+                  {' '}
+                  · {u.status}
+                  {u.questions_extracted > 0
+                    ? ` · ${u.questions_extracted} extracted`
+                    : ''}
+                </span>
+                <span className="ml-2 text-[10px] text-text-muted">
+                  {rel(u.created_at)}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+
+      {/* Recent published */}
+      {overview.recent_published.length > 0 && (
+        <>
+          <p className="mt-6 text-[10px] uppercase tracking-[0.22em] text-violet-300">
+            Newly published questions
+          </p>
+          <ul className="mt-2 space-y-1.5">
+            {overview.recent_published.slice(0, 5).map((q) => (
+              <li
+                key={q.id}
+                className="rounded-lg px-3 py-2 text-[11.5px]"
+                style={{
+                  backgroundColor: '#0A0A12',
+                  border: '1px solid #1E1E2E',
+                }}
+              >
+                <span style={{ color: '#10B981' }}>#{q.id}</span>{' '}
+                <span className="text-text-muted">by {q.professor_name} ·</span>{' '}
+                <span style={{ color: '#C4B5FD', textTransform: 'capitalize' }}>
+                  {q.subject_id}
+                </span>
+                <p
+                  className="mt-1 line-clamp-2 text-text-muted"
+                  style={{ fontSize: 11 }}
+                >
+                  {q.question_preview}
+                  {q.question_preview.length >= 100 ? '…' : ''}
+                </p>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
     </section>
   );
 }

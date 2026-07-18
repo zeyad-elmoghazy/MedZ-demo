@@ -85,6 +85,10 @@ export default function StudentSubjectsPage() {
   const [displayName, setDisplayName] = useState('');
   const [signingOut, setSigningOut] = useState(false);
   const [filter, setFilter] = useState<Filter>('All Subjects');
+  // Live per-subject published-question counts. Kept in a Map for
+  // O(1) lookup when the catalog renders. Empty until the /api/
+  // student/stats response arrives.
+  const [liveCounts, setLiveCounts] = useState<Map<string, number>>(new Map());
 
   // Populate name from the demo profile (or real Supabase profile).
   // Same pattern as the dashboard — keeps the navbar user pill in
@@ -113,6 +117,37 @@ export default function StudentSubjectsPage() {
     })();
     return () => { cancelled = true; };
   }, [supabase]);
+
+  // Live counts. Every real question a professor publishes
+  // arrives here on the next request (subject to the /api/
+  // student/stats 60 s Cache-Control window; we bypass with
+  // cache: 'no-store' so a professor publish shows on the next
+  // page load without waiting).
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (isDemoMode()) return;
+      try {
+        const res = await fetch('/api/student/stats', {
+          credentials: 'include',
+          cache: 'no-store',
+        });
+        if (!res.ok) return;
+        const body = (await res.json()) as {
+          subjects?: Array<{ id: string; publishedCount?: number }>;
+        };
+        if (cancelled) return;
+        const map = new Map<string, number>();
+        for (const s of body.subjects ?? []) {
+          if (typeof s.publishedCount === 'number') map.set(s.id, s.publishedCount);
+        }
+        setLiveCounts(map);
+      } catch {
+        /* silent — the catalog will show its default label */
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   async function handleLogout() {
     if (signingOut) return;
@@ -273,7 +308,7 @@ export default function StudentSubjectsPage() {
             }}
           >
             {filtered.map((s) => (
-              <SubjectCard key={s.id} subject={s} />
+              <SubjectCard key={s.id} subject={s} liveCount={liveCounts.get(s.id)} />
             ))}
           </div>
 
@@ -302,7 +337,16 @@ export default function StudentSubjectsPage() {
 // Subject card — image variant OR emoji-code variant per design.
 // =============================================================
 
-function SubjectCard({ subject: s }: { subject: SubjectEntry }) {
+function SubjectCard({
+  subject: s,
+  liveCount,
+}: {
+  subject: SubjectEntry;
+  // Live count from the DB when available; falls back to the
+  // catalog label ("450+", etc.) for demo mode or subjects the
+  // stats endpoint didn't return.
+  liveCount?: number;
+}) {
   const liveCard: CSSProperties = {
     position: 'relative',
     display: 'flex',
@@ -486,7 +530,9 @@ function SubjectCard({ subject: s }: { subject: SubjectEntry }) {
             color: '#94A3B8',
           }}
         >
-          <span style={{ fontWeight: 700, color: '#C4B5FD' }}>{s.qs}</span>
+          <span style={{ fontWeight: 700, color: '#C4B5FD' }}>
+            {typeof liveCount === 'number' ? liveCount : s.qs}
+          </span>
           <span>questions</span>
         </div>
 
