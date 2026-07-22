@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, type CSSProperties } from 'react';
+import { useEffect, useMemo, useState, type CSSProperties } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { notFound, useParams } from 'next/navigation';
@@ -71,6 +71,41 @@ export default function SubjectModulesPage() {
 
   const totalModules = HISTOLOGY_ACADEMIC_YEARS.reduce((n, y) => n + y.modules.length, 0);
   const totalYears = HISTOLOGY_ACADEMIC_YEARS.length;
+
+  // Live per-module published counts from the DB. Overlays the
+  // (zeroed) static catalog. Empty until fetch resolves.
+  const [liveCounts, setLiveCounts] = useState<Map<string, number>>(new Map());
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/professor/modules', {
+          credentials: 'include',
+          cache: 'no-store',
+        });
+        if (!res.ok) return;
+        const body = (await res.json()) as {
+          modules?: Array<{
+            code: string;
+            chapters?: Array<{ published_count?: number }>;
+          }>;
+        };
+        if (cancelled) return;
+        const map = new Map<string, number>();
+        for (const m of body.modules ?? []) {
+          const sum = (m.chapters ?? []).reduce(
+            (a, c) => a + (Number(c.published_count) || 0),
+            0
+          );
+          map.set(m.code, sum);
+        }
+        setLiveCounts(map);
+      } catch {
+        /* stay zero */
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   return (
     <main style={{ minHeight: '100vh', background: '#08070F', fontFamily: 'Inter, system-ui, sans-serif' }}>
@@ -220,6 +255,7 @@ export default function SubjectModulesPage() {
                       subjectId={subjectId}
                       prefix={subject.prefix}
                       module={m}
+                      liveQs={liveCounts.get(m.code)}
                     />
                   ))}
                 </div>
@@ -236,10 +272,12 @@ function ModuleCard({
   subjectId,
   prefix,
   module: m,
+  liveQs,
 }: {
   subjectId: string;
   prefix: string;
   module: Module;
+  liveQs?: number;
 }) {
   // Live progress values — used only to decide whether to show
   // completion tick marks in the preview list. Fine to be
@@ -298,7 +336,7 @@ function ModuleCard({
           >
             {prefix} {m.code}
           </span>
-          <span style={{ fontSize: 10, color: '#94A3B8' }}>{m.qs} Qs</span>
+          <span style={{ fontSize: 10, color: '#94A3B8' }}>{liveQs ?? m.qs} Qs</span>
         </div>
         <div
           style={{

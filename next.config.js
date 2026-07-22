@@ -69,6 +69,9 @@ const nextConfig = {
   // edge layer also brotli-compresses on top of this in prod).
   compress: true,
 
+  // (see experimental.serverComponentsExternalPackages below —
+  // Next 14 spelling of the same thing)
+
   // Modularize barrel imports so `import { Foo } from 'lucide-react'`
   // pulls just Foo, not every icon in the library. Same for framer /
   // recharts / radix — huge wins on First Load JS.
@@ -81,6 +84,10 @@ const nextConfig = {
       '@radix-ui/react-progress',
       '@radix-ui/react-slot',
     ],
+    // Server-only Node deps that must NOT enter the webpack graph:
+    // pdfjs-dist ships worker files with `import.meta` that Terser
+    // can't process. pdf-parse loads it dynamically at runtime.
+    serverComponentsExternalPackages: ['pdf-parse', 'pdfjs-dist'],
   },
 
   // Drop console.* calls (except errors/warnings) from prod builds.

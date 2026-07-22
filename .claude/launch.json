@@ -6,8 +6,7 @@
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev"],
       "port": 3000,
-      "autoPort": true,
-      "env": { "NEXT_PUBLIC_DEMO": "1" }
+      "autoPort": true
     }
   ]
 }

@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, type CSSProperties } from 'react';
+import { useEffect, useMemo, useState, type CSSProperties } from 'react';
 import Link from 'next/link';
 import { notFound, useParams, useRouter } from 'next/navigation';
 import { motion } from 'framer-motion';
@@ -66,6 +66,45 @@ export default function ModuleChaptersPage() {
     [m],
   );
   const progress = useModuleProgress(params.subjectId, m.code, chapterMeta);
+
+  // Live per-chapter published_count + module total. Overlays
+  // the (zeroed) static catalog so the moment a professor
+  // publishes, this page shows it.
+  const [liveModuleQs, setLiveModuleQs] = useState<number | null>(null);
+  const [chapterLive, setChapterLive] = useState<Map<string, number>>(new Map());
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/professor/modules', {
+          credentials: 'include',
+          cache: 'no-store',
+        });
+        if (!res.ok) return;
+        const body = (await res.json()) as {
+          modules?: Array<{
+            code: string;
+            chapters?: Array<{ slug: string; published_count?: number }>;
+          }>;
+        };
+        if (cancelled) return;
+        const mod = body.modules?.find((x) => x.code === m.code);
+        if (!mod) return;
+        const map = new Map<string, number>();
+        let total = 0;
+        for (const c of mod.chapters ?? []) {
+          const n = Number(c.published_count) || 0;
+          map.set(c.slug, n);
+          total += n;
+        }
+        setChapterLive(map);
+        setLiveModuleQs(total);
+      } catch {
+        /* stay at 0 */
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [m.code]);
 
   const publishedChapters = m.chapters.filter((c) => c.published);
   const publishedCount = publishedChapters.length;
@@ -133,7 +172,7 @@ export default function ModuleChaptersPage() {
                 {m.name}
               </h1>
               <div style={{ fontSize: 12.5, color: '#94A3B8', marginTop: 8 }}>
-                {m.qs} questions · {m.chapters.length} chapters
+                {liveModuleQs ?? m.qs} questions · {m.chapters.length} chapters
               </div>
               {publishedCount === 0 && (
                 <div

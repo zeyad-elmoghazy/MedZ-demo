@@ -78,11 +78,11 @@ export default function ProfessorDashboardPage() {
   const refreshModules = useCallback(async () => {
     try {
       const { modules: m } = await fetchModules();
-      setModules(m.length > 0 ? m : DEMO_MODULES);
+      // Real user, empty modules → leave empty (honest). Only
+      // demo mode falls back to the static catalog.
+      setModules(m.length > 0 ? m : isDemoMode() ? DEMO_MODULES : []);
     } catch {
-      // 401 in demo mode is expected — seed catalog so
-      // Upload / Post-Lecture / Mock Exams stay usable.
-      setModules(DEMO_MODULES);
+      setModules(isDemoMode() ? DEMO_MODULES : []);
     }
   }, []);
 
