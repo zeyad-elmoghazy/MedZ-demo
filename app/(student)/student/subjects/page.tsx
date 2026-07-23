@@ -40,18 +40,25 @@ type SubjectEntry = {
   code?: string;          // "PHYS-101" style catalog code
 };
 
+// Coming-soon items: professor is TBD until we sign one — surface
+// that honestly rather than fake a name. Only the live Histology
+// entry keeps a real professor + avatar.
+const TBA_PROF = 'Dr. TBA';
+const TBA_ROLE = 'Cairo University';
+const TBA_AV = 'linear-gradient(135deg,#7C3AED,#8B5CF6)';
+
 const CATALOG: SubjectEntry[] = [
-  { id: 'histology',    name: 'Histology',    professor: 'Dr. Ahmed Zahra',   profRole: 'Histology · Cairo University', profInitials: 'AZ', profAv: 'linear-gradient(135deg,#7C3AED,#8B5CF6)', qs: '450+', category: 'basic',    available: true,  image: '/subjects/histology.webp' },
-  { id: 'anatomy',      name: 'Anatomy',      professor: 'Dr. Hesham Fayed',  profRole: 'Anatomy & Embryology',         profInitials: 'HF', profAv: 'linear-gradient(135deg,#0EA5E9,#6366F1)', qs: '520',  category: 'basic',    available: false, image: '/subjects/anatomy.webp' },
-  { id: 'pathology',    name: 'Pathology',    professor: 'Dr. Mona Saleh',    profRole: 'General & Systemic Pathology', profInitials: 'MS', profAv: 'linear-gradient(135deg,#EC4899,#8B5CF6)', qs: '480',  category: 'clinical', available: false, image: '/subjects/pathology.webp' },
-  { id: 'physiology',   name: 'Physiology',   professor: 'Dr. Karim Adel',    profRole: 'Systems Physiology',           profInitials: 'KA', profAv: 'linear-gradient(135deg,#F59E0B,#EF4444)', qs: '410',  category: 'basic',    available: false, image: '/subjects/physiology.webp' },
-  { id: 'biochemistry', name: 'Biochemistry', professor: 'Dr. Yasmin Fouad',  profRole: 'Metabolism & Molecular Bio',   profInitials: 'YF', profAv: 'linear-gradient(135deg,#10B981,#0EA5E9)', qs: '360',  category: 'basic',    available: false, image: '/subjects/biochemistry.webp' },
-  { id: 'pharmacology', name: 'Pharmacology', professor: 'Dr. Tarek Nabil',   profRole: 'Clinical Pharmacology',        profInitials: 'TN', profAv: 'linear-gradient(135deg,#8B5CF6,#EC4899)', qs: '390',  category: 'clinical', available: false, image: '/subjects/pharmacology.webp' },
-  { id: 'microbiology', name: 'Microbiology', professor: 'Dr. Rania Samir',   profRole: 'Bacteriology & Virology',      profInitials: 'RS', profAv: 'linear-gradient(135deg,#14B8A6,#22C55E)', qs: '340',  category: 'clinical', available: false, icon: '🦠', code: 'MICR-101' },
-  { id: 'immunology',   name: 'Immunology',   professor: 'Dr. Sherif Aziz',   profRole: 'Clinical Immunology',          profInitials: 'SA', profAv: 'linear-gradient(135deg,#6366F1,#8B5CF6)', qs: '280',  category: 'clinical', available: false, icon: '🛡️', code: 'IMMU-101' },
-  { id: 'embryology',   name: 'Embryology',   professor: 'Dr. Hesham Fayed',  profRole: 'Developmental Anatomy',        profInitials: 'HF', profAv: 'linear-gradient(135deg,#0EA5E9,#6366F1)', qs: '260',  category: 'basic',    available: false, icon: '👶', code: 'EMBR-101' },
-  { id: 'parasitology', name: 'Parasitology', professor: 'Dr. Rania Samir',   profRole: 'Medical Parasitology',         profInitials: 'RS', profAv: 'linear-gradient(135deg,#14B8A6,#22C55E)', qs: '240',  category: 'clinical', available: false, icon: '🪱', code: 'PARA-101' },
-  { id: 'genetics',     name: 'Genetics',     professor: 'Dr. Yasmin Fouad',  profRole: 'Medical Genetics',             profInitials: 'YF', profAv: 'linear-gradient(135deg,#10B981,#0EA5E9)', qs: '220',  category: 'basic',    available: false, icon: '🧫', code: 'GENE-101' },
+  { id: 'histology',    name: 'Histology',    professor: 'Dr. Ahmed Zahra', profRole: 'Histology · Cairo University', profInitials: 'AZ', profAv: 'linear-gradient(135deg,#7C3AED,#8B5CF6)', qs: '450+', category: 'basic',    available: true,  image: '/subjects/histology.webp' },
+  { id: 'anatomy',      name: 'Anatomy',      professor: TBA_PROF, profRole: TBA_ROLE, profInitials: '', profAv: TBA_AV, qs: '520', category: 'basic',    available: false, image: '/subjects/anatomy.webp' },
+  { id: 'pathology',    name: 'Pathology',    professor: TBA_PROF, profRole: TBA_ROLE, profInitials: '', profAv: TBA_AV, qs: '480', category: 'clinical', available: false, image: '/subjects/pathology.webp' },
+  { id: 'physiology',   name: 'Physiology',   professor: TBA_PROF, profRole: TBA_ROLE, profInitials: '', profAv: TBA_AV, qs: '410', category: 'basic',    available: false, image: '/subjects/physiology.webp' },
+  { id: 'biochemistry', name: 'Biochemistry', professor: TBA_PROF, profRole: TBA_ROLE, profInitials: '', profAv: TBA_AV, qs: '360', category: 'basic',    available: false, image: '/subjects/biochemistry.webp' },
+  { id: 'pharmacology', name: 'Pharmacology', professor: TBA_PROF, profRole: TBA_ROLE, profInitials: '', profAv: TBA_AV, qs: '390', category: 'clinical', available: false, image: '/subjects/pharmacology.webp' },
+  { id: 'microbiology', name: 'Microbiology', professor: TBA_PROF, profRole: TBA_ROLE, profInitials: '', profAv: TBA_AV, qs: '340', category: 'clinical', available: false, image: '/subjects/microbiology.webp' },
+  { id: 'immunology',   name: 'Immunology',   professor: TBA_PROF, profRole: TBA_ROLE, profInitials: '', profAv: TBA_AV, qs: '280', category: 'clinical', available: false, image: '/subjects/immunology.webp' },
+  { id: 'embryology',   name: 'Embryology',   professor: TBA_PROF, profRole: TBA_ROLE, profInitials: '', profAv: TBA_AV, qs: '260', category: 'basic',    available: false, image: '/subjects/embryology.webp' },
+  { id: 'parasitology', name: 'Parasitology', professor: TBA_PROF, profRole: TBA_ROLE, profInitials: '', profAv: TBA_AV, qs: '240', category: 'clinical', available: false, image: '/subjects/parasitology.webp' },
+  { id: 'genetics',     name: 'Genetics',     professor: TBA_PROF, profRole: TBA_ROLE, profInitials: '', profAv: TBA_AV, qs: '220', category: 'basic',    available: false, image: '/subjects/genetics.webp' },
 ];
 
 const AVAILABLE_COUNT = CATALOG.filter((s) => s.available).length;
@@ -476,23 +483,25 @@ function SubjectCard({
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 9, marginTop: 11 }}>
-          <div
-            style={{
-              width: 26,
-              height: 26,
-              borderRadius: '50%',
-              flex: 'none',
-              background: s.profAv,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              fontSize: 10,
-              fontWeight: 700,
-              color: '#fff',
-            }}
-          >
-            {s.profInitials}
-          </div>
+          {s.available && (
+            <div
+              style={{
+                width: 26,
+                height: 26,
+                borderRadius: '50%',
+                flex: 'none',
+                background: s.profAv,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: 10,
+                fontWeight: 700,
+                color: '#fff',
+              }}
+            >
+              {s.profInitials}
+            </div>
+          )}
           <div style={{ minWidth: 0 }}>
             <div
               style={{

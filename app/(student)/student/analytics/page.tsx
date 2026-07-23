@@ -11,6 +11,7 @@ import {
   BarChart3,
   BookmarkCheck,
   Bookmark,
+  Crosshair,
   Flame,
   LayoutDashboard,
   Library,
@@ -66,12 +67,31 @@ export default function AnalyticsPage() {
   const supabase = createBrowserClient();
   const answers = useQuizStore((s) => s.answers);
   const bookmarks = useQuizStore((s) => s.bookmarks);
+  const lastResult = useQuizStore((s) => s.lastResult);
+  const mistakeQuestionIds = useQuizStore((s) => s.mistakeQuestionIds);
   const jumpToQuestion = useQuizStore((s) => s.jumpToQuestion);
+  const startMistakeSession = useQuizStore((s) => s.startMistakeSession);
 
   const total = histologyQuestions.length;
-  const attempted = Object.keys(answers).length;
+
+  // Prefer lastResult (persisted snapshot of the most recent
+  // completed session) so numbers stay after clearSession() wipes
+  // `answers`. Fall back to in-flight answers if the student is
+  // still mid-session and hasn't finished yet.
+  const answerLookup = useMemo(() => {
+    if (lastResult) {
+      const m: Record<number, string> = {};
+      for (const r of lastResult.results) {
+        if (r.chosen !== null) m[r.questionId] = r.chosen;
+      }
+      return m;
+    }
+    return answers;
+  }, [lastResult, answers]);
+
+  const attempted = Object.keys(answerLookup).length;
   const correctCount = histologyQuestions.reduce(
-    (acc, q) => (answers[q.id] === q.correctAnswer ? acc + 1 : acc),
+    (acc, q) => (answerLookup[q.id] === q.correctAnswer ? acc + 1 : acc),
     0
   );
   const accuracy = attempted === 0 ? 0 : Math.round((correctCount / attempted) * 100);
@@ -178,6 +198,49 @@ export default function AnalyticsPage() {
               />
             </div>
           </FadeUp>
+
+          {mistakeQuestionIds.length > 0 && (
+            <FadeUp className="mt-6">
+              <Panel>
+                <div className="flex flex-wrap items-center justify-between gap-4">
+                  <div className="flex items-start gap-3">
+                    <span
+                      className="grid h-10 w-10 place-items-center rounded-lg text-white"
+                      style={{
+                        backgroundColor: 'rgba(124,58,237,0.2)',
+                        border: '1px solid rgba(159,103,255,0.45)',
+                      }}
+                    >
+                      <Crosshair className="h-4 w-4 text-violet-200" />
+                    </span>
+                    <div>
+                      <p className="text-sm font-semibold text-white">
+                        {mistakeQuestionIds.length} question{mistakeQuestionIds.length === 1 ? '' : 's'} to practice
+                      </p>
+                      <p className="text-xs text-text-muted">
+                        Everything you got wrong across sessions — practice anytime to clear the list.
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      startMistakeSession(mistakeQuestionIds);
+                      router.push('/student/quiz/histology?mode=mistakes');
+                    }}
+                    className="group inline-flex h-11 items-center gap-2 rounded-xl px-5 text-sm font-semibold text-white transition"
+                    style={{
+                      backgroundColor: '#7C3AED',
+                      boxShadow: '0 0 22px rgba(124,58,237,0.45)',
+                    }}
+                  >
+                    Start mistake practice
+                    <ArrowRight className="h-4 w-4 transition group-hover:translate-x-0.5" />
+                  </button>
+                </div>
+              </Panel>
+            </FadeUp>
+          )}
 
           <FadeUp className="mt-8">
             <AnalyticsDashboard data={chartData} currentAccuracy={accuracy} />
@@ -286,7 +349,7 @@ export default function AnalyticsPage() {
               ) : (
                 <ul className="mt-5 space-y-2.5">
                   {bookmarkedQuestions.map((q) => {
-                    const userAnswer = answers[q.id];
+                    const userAnswer = answerLookup[q.id];
                     const state = !userAnswer
                       ? 'skipped'
                       : userAnswer === q.correctAnswer

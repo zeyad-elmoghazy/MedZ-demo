@@ -40,6 +40,10 @@ export type QuizState = {
   filterQuestionIds: number[] | null;
   lastResult: SubmissionResult | null;
   savedSession: SavedSession | null;
+  /** Question IDs the student got wrong across ALL past sessions.
+   *  Persists so "Quiz on mistakes" is available anytime, not just
+   *  right after finishing a challenge. */
+  mistakeQuestionIds: number[];
 
   answerQuestion: (questionId: number, choiceId: string) => void;
   toggleBookmark: (questionId: number) => void;
@@ -54,6 +58,10 @@ export type QuizState = {
   startMistakeSession: (mistakeIds: number[]) => void;
   clearFilter: () => void;
   setLastResult: (result: SubmissionResult) => void;
+  /** Merge new mistake IDs into the persistent mistake pool. */
+  recordMistakes: (ids: number[]) => void;
+  /** Remove IDs the student has now answered correctly. */
+  clearMistakes: (ids: number[]) => void;
   saveSession: (subjectId: string) => void;
   loadSession: (subjectId: string) => boolean;
   clearSession: () => void;
@@ -71,6 +79,7 @@ const initialState = {
   filterQuestionIds: null as number[] | null,
   lastResult: null as SubmissionResult | null,
   savedSession: null as SavedSession | null,
+  mistakeQuestionIds: [] as number[],
 };
 
 export const useQuizStore = create<QuizState>()(
@@ -149,6 +158,25 @@ export const useQuizStore = create<QuizState>()(
       clearFilter: () => set({ filterQuestionIds: null }),
 
       setLastResult: (result) => set({ lastResult: result }),
+
+      recordMistakes: (ids) =>
+        set((state) => {
+          if (ids.length === 0) return {};
+          const merged = new Set(state.mistakeQuestionIds);
+          for (const id of ids) merged.add(id);
+          return { mistakeQuestionIds: Array.from(merged) };
+        }),
+
+      clearMistakes: (ids) =>
+        set((state) => {
+          if (ids.length === 0) return {};
+          const remove = new Set(ids);
+          return {
+            mistakeQuestionIds: state.mistakeQuestionIds.filter(
+              (id) => !remove.has(id)
+            ),
+          };
+        }),
 
       /**
        * Snapshot the current quiz state to the store AND localStorage.
@@ -271,6 +299,7 @@ export const useQuizStore = create<QuizState>()(
         filterQuestionIds: state.filterQuestionIds,
         lastResult: state.lastResult,
         savedSession: state.savedSession,
+        mistakeQuestionIds: state.mistakeQuestionIds,
       }),
     }
   )

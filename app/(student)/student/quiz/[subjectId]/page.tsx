@@ -88,6 +88,8 @@ export default function QuizEnginePage() {
   const nextQuestion = useQuizStore((s) => s.nextQuestion);
   const completeSession = useQuizStore((s) => s.completeSession);
   const setLastResult = useQuizStore((s) => s.setLastResult);
+  const recordMistakes = useQuizStore((s) => s.recordMistakes);
+  const clearMistakes = useQuizStore((s) => s.clearMistakes);
   const saveSession = useQuizStore((s) => s.saveSession);
   const clearSession = useQuizStore((s) => s.clearSession);
   const jumpToQuestion = useQuizStore((s) => s.jumpToQuestion);
@@ -293,7 +295,9 @@ export default function QuizEnginePage() {
 
   function handleContinueChallenge() {
     setShowExitModal(false);
-    enterFullscreen();
+    // Only re-enter fullscreen for the answer phase; the review
+    // phase (submitted) is intentionally windowed.
+    if (!submittedRef.current) enterFullscreen();
   }
 
   function handleViolationDismiss() {
@@ -368,10 +372,36 @@ export default function QuizEnginePage() {
     }
 
     if (isDemoMode()) {
-      const score = histologyQuestions.filter(
-        (q) => answers[q.id] === q.correctAnswer
-      ).length;
-      const total = histologyQuestions.length;
+      // Build a full result snapshot BEFORE clearSession() wipes
+      // `answers` — otherwise the results page reads nothing and
+      // shows every question as skipped.
+      const scoredQuestions = questions;
+      const results = scoredQuestions.map((q) => {
+        const chosen = answers[q.id] ?? null;
+        return {
+          questionId: q.id,
+          isCorrect: chosen === q.correctAnswer,
+          chosen,
+          correct: q.correctAnswer,
+        };
+      });
+      const score = results.filter((r) => r.isCorrect).length;
+      const total = scoredQuestions.length;
+      const attempted = results.filter((r) => r.chosen !== null).length;
+
+      setLastResult({
+        sessionId: `demo-${Date.now()}`,
+        score,
+        total,
+        accuracy: attempted === 0 ? 0 : Math.round((score / attempted) * 100),
+        results,
+      });
+
+      const wrongIds = results.filter((r) => r.chosen !== null && !r.isCorrect).map((r) => r.questionId);
+      const correctIds = results.filter((r) => r.isCorrect).map((r) => r.questionId);
+      recordMistakes(wrongIds);
+      clearMistakes(correctIds);
+
       completeSession();
       clearSession();
       router.push(
@@ -412,6 +442,10 @@ export default function QuizEnginePage() {
       };
 
       setLastResult(data);
+      const wrongIds = data.results.filter((r) => r.chosen !== null && !r.isCorrect).map((r) => r.questionId);
+      const correctIds = data.results.filter((r) => r.isCorrect).map((r) => r.questionId);
+      recordMistakes(wrongIds);
+      clearMistakes(correctIds);
       completeSession();
       clearSession();
       router.push(`/student/results/${subjectId}`);
@@ -427,12 +461,18 @@ export default function QuizEnginePage() {
   }
 
   async function handleCopy() {
-    const correct = currentQuestion.choices.find(
+    const lines: string[] = [currentQuestion.question, ''];
+    currentQuestion.choices.forEach((c, idx) => {
+      lines.push(`${letterFor(idx)}. ${c.text}`);
+    });
+    const correctIdx = currentQuestion.choices.findIndex(
       (c) => c.id === currentQuestion.correctAnswer
     );
-    const payload = `Q: ${currentQuestion.question}\nA: ${correct?.text ?? ''}`;
+    if (correctIdx >= 0) {
+      lines.push('', `Answer: ${letterFor(correctIdx)}`);
+    }
     try {
-      await navigator.clipboard.writeText(payload);
+      await navigator.clipboard.writeText(lines.join('\n'));
       setCopied(true);
       setTimeout(() => setCopied(false), 1800);
     } catch {
@@ -454,7 +494,6 @@ export default function QuizEnginePage() {
         onRequestFullscreen={enterFullscreen}
         subjectName={histologySubject.name}
         onExit={handleExitButtonClick}
-        showExitButton={!submitted}
       />
 
       <AnimatePresence>
@@ -660,7 +699,6 @@ function TopBar({
   onRequestFullscreen,
   subjectName,
   onExit,
-  showExitButton,
 }: {
   currentIndex: number;
   total: number;
@@ -673,7 +711,6 @@ function TopBar({
   onRequestFullscreen: () => void;
   subjectName: string;
   onExit: () => void;
-  showExitButton: boolean;
 }) {
   return (
     <header
@@ -718,24 +755,20 @@ function TopBar({
               icon={<Maximize2 className="h-4 w-4" />}
             />
           )}
-          {showExitButton && (
-            <>
-              <button
-                type="button"
-                onClick={onExit}
-                title="Exit the challenge"
-                className="flex items-center gap-1.5 rounded-lg border border-transparent px-3 py-1.5 text-xs font-medium text-slate-400 transition-all duration-200 hover:border-red-500/30 hover:bg-red-500/10 hover:text-red-400"
-              >
-                <LogOut className="h-3.5 w-3.5" />
-                Exit
-              </button>
-              <span
-                aria-hidden
-                className="mx-1 h-5 w-px"
-                style={{ backgroundColor: 'rgba(255,255,255,0.08)' }}
-              />
-            </>
-          )}
+          <button
+            type="button"
+            onClick={onExit}
+            title="Exit the challenge"
+            className="flex items-center gap-1.5 rounded-lg border border-transparent px-3 py-1.5 text-xs font-medium text-slate-300 transition-all duration-200 hover:border-red-500/30 hover:bg-red-500/10 hover:text-red-400"
+          >
+            <LogOut className="h-3.5 w-3.5" />
+            Exit
+          </button>
+          <span
+            aria-hidden
+            className="mx-1 h-5 w-px"
+            style={{ backgroundColor: 'rgba(255,255,255,0.08)' }}
+          />
           <IconButton
             label={isBookmarked ? 'Remove bookmark' : 'Bookmark this question'}
             onClick={onBookmarkToggle}
@@ -1178,7 +1211,10 @@ function PhaseTwoRight({
               exit={{ opacity: 0, y: -8 }}
               transition={{ duration: 0.25 }}
             >
-              <ReferenceCard reference={question.reference} />
+              <ReferenceCard
+                reference={question.reference}
+                imageUrl={question.referenceImageUrl ?? null}
+              />
             </motion.div>
           )}
         </AnimatePresence>
@@ -1342,7 +1378,13 @@ function SectionHeader({
   );
 }
 
-function ReferenceCard({ reference }: { reference: string }) {
+function ReferenceCard({
+  reference,
+  imageUrl,
+}: {
+  reference: string;
+  imageUrl: string | null;
+}) {
   return (
     <div
       className="relative overflow-hidden rounded-xl p-6"
@@ -1382,6 +1424,32 @@ function ReferenceCard({ reference }: { reference: string }) {
           </span>
         </div>
       </div>
+
+      {imageUrl && (
+        <div
+          className="mt-5 overflow-hidden rounded-lg"
+          style={{
+            border: '1px solid rgba(230, 217, 168, 0.25)',
+            backgroundColor: '#FAFAF5',
+          }}
+        >
+          {/* Plain <img> — bucket URLs aren't in next/image
+              remotePatterns for arbitrary Supabase projects, and
+              this way the browser fetches directly from the CDN. */}
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={imageUrl}
+            alt="Source page from lecture notes"
+            style={{
+              display: 'block',
+              width: '100%',
+              height: 'auto',
+              maxHeight: '70vh',
+              objectFit: 'contain',
+            }}
+          />
+        </div>
+      )}
 
       <p
         className="mt-5 font-handwritten leading-relaxed"
