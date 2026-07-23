@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createRouteHandlerClient } from '@/lib/supabase-server';
 import { applyRateLimit } from '@/lib/apply-rate-limit';
 import { authLimiter } from '@/lib/rate-limit';
 import type { Database } from '@/lib/supabase';
@@ -62,7 +62,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: GENERIC_AUTH_ERROR }, { status: 400 });
   }
 
-  const supabase = createRouteHandlerClient<Database>({ cookies });
+  const supabase = await createRouteHandlerClient<Database>({ cookies });
   const { data, error } = await supabase.auth.signInWithPassword({
     email: payload.email,
     password: payload.password,

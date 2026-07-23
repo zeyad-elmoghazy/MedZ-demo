@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createRouteHandlerClient } from '@/lib/supabase-server';
 import type { Database } from '@/lib/supabase';
 
 export const runtime = 'nodejs';
@@ -18,7 +18,7 @@ export const dynamic = 'force-dynamic';
  * cache lives 30 s to absorb tab-switch storms.
  */
 export async function GET() {
-  const supabase = createRouteHandlerClient<Database>({ cookies });
+  const supabase = await createRouteHandlerClient<Database>({ cookies });
 
   const {
     data: { user },

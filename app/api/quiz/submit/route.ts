@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createRouteHandlerClient } from '@/lib/supabase-server';
 import { createClient } from '@supabase/supabase-js';
 import { z } from 'zod';
 import { isDemoMode, type Database, type UserRole } from '@/lib/supabase';
@@ -52,7 +52,7 @@ const SubmitBodySchema = z.object({
  * paint without a follow-up fetch.
  */
 export async function POST(request: NextRequest) {
-  const supabase = createRouteHandlerClient<Database>({ cookies });
+  const supabase = await createRouteHandlerClient<Database>({ cookies });
 
   // 1) Verify session.
   const {

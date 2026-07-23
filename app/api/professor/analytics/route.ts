@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createRouteHandlerClient } from '@/lib/supabase-server';
 import type { Database } from '@/lib/supabase';
 
 export const runtime = 'nodejs';
@@ -14,7 +14,7 @@ export const dynamic = 'force-dynamic';
  * No hardcoded fallbacks — an empty DB returns [].
  */
 export async function GET() {
-  const supabase = createRouteHandlerClient<Database>({ cookies });
+  const supabase = await createRouteHandlerClient<Database>({ cookies });
 
   const {
     data: { user },

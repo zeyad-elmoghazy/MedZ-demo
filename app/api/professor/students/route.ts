@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createRouteHandlerClient } from '@/lib/supabase-server';
 import { createClient } from '@supabase/supabase-js';
 import type { Database, UserRole } from '@/lib/supabase';
 import { SUBJECTS_CONFIG } from '@/lib/dashboard-data';
@@ -48,7 +48,7 @@ type SubjectStatRow = {
  * one to optimize next (batch RPC or a streak view).
  */
 export async function GET() {
-  const supabase = createRouteHandlerClient<Database>({ cookies });
+  const supabase = await createRouteHandlerClient<Database>({ cookies });
 
   const {
     data: { user },

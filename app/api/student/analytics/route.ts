@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createRouteHandlerClient } from '@/lib/supabase-server';
 import { createClient } from '@supabase/supabase-js';
 import { withCache } from '@/lib/cache';
 import { CACHE_KEYS, TTL } from '@/lib/redis';
@@ -27,7 +27,7 @@ export const dynamic = 'force-dynamic';
  *     visible immediately without waiting for the TTL.
  */
 export async function GET() {
-  const supabase = createRouteHandlerClient<Database>({ cookies });
+  const supabase = await createRouteHandlerClient<Database>({ cookies });
 
   const {
     data: { user },

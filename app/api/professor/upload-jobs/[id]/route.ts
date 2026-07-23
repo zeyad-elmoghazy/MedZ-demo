@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createRouteHandlerClient } from '@/lib/supabase-server';
 import { z } from 'zod';
 import type { Database } from '@/lib/supabase';
 
@@ -15,11 +15,9 @@ const PatchSchema = z.object({
   errorMessage: z.string().max(1000).optional(),
 });
 
-export async function PATCH(
-  request: Request,
-  { params }: { params: { id: string } }
-) {
-  const supabase = createRouteHandlerClient<Database>({ cookies });
+export async function PATCH(request: Request, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
+  const supabase = await createRouteHandlerClient<Database>({ cookies });
   const {
     data: { user },
   } = await supabase.auth.getUser();

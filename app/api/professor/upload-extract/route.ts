@@ -1,17 +1,27 @@
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createRouteHandlerClient } from '@/lib/supabase-server';
 import type { Database } from '@/lib/supabase';
 import {
   extractPdfPages,
   extractQuestionsFromText,
   buildNotesIndex,
   annotateWithReferences,
+  type ExtractedQuestion,
 } from '@/lib/pdf-extract';
+import { processPdf, ocrPdfToPages } from '@/lib/ocr/pipeline';
+import { rasteriseAndUploadNotes } from '@/lib/ocr/notes-upload';
+import { writeFile, unlink } from 'fs/promises';
+import path from 'path';
+import os from 'os';
+import crypto from 'crypto';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-export const maxDuration = 60;
+// OCR fallback rasterises + tesseracts every page; ~2s/page on
+// a lecture-sized PDF so 60s is not enough. 300s matches the
+// /api/professor/ocr endpoint.
+export const maxDuration = 300;
 
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
 
@@ -36,7 +46,7 @@ const MAX_FILE_BYTES = 10 * 1024 * 1024;
  * students see them.
  */
 export async function POST(request: Request) {
-  const supabase = createRouteHandlerClient<Database>({ cookies });
+  const supabase = await createRouteHandlerClient<Database>({ cookies });
 
   const {
     data: { user },
@@ -169,24 +179,105 @@ export async function POST(request: Request) {
     const fullText = qPages.pages.map((p) => p.text).join('\n\n');
 
     // ---- 2) Notes index (optional) ----
+    // Two things happen with the notes file:
+    //   a. Build a text index so annotateWithReferences can match
+    //      each question stem to the notes page it came from.
+    //      pdf-parse first; if the notes look scanned, OCR them.
+    //   b. Rasterise + upload every page to Storage so the student
+    //      can see the actual page image next to the question.
     let notesIndex = null;
+    let notesStoragePrefix: string | null = null;
     if (notesFile instanceof File) {
       const nBuffer = Buffer.from(await notesFile.arrayBuffer());
       notesIndex = await buildNotesIndex(nBuffer);
+
+      // Scanned-notes fallback: if pdf-parse extracted almost
+      // nothing, OCR the notes pages and rebuild the index from
+      // recognised text.
+      if (notesIndex && looksScannedIndex(notesIndex)) {
+        const notesTmp = path.join(os.tmpdir(), `medz-notes-${jobId}.pdf`);
+        try {
+          await writeFile(notesTmp, nBuffer);
+          const ocrPages = await ocrPdfToPages(notesTmp);
+          notesIndex = {
+            totalPages: ocrPages.length,
+            pages: ocrPages.map((p) => ({ page: p.page, text: p.text })),
+          };
+          console.log(
+            `[upload-extract] OCR'd ${ocrPages.length} scanned notes pages for reference matching`
+          );
+        } catch (err) {
+          console.error('[upload-extract] notes OCR failed:', err);
+        } finally {
+          await unlink(notesTmp).catch(() => {});
+        }
+      }
+
+      try {
+        notesStoragePrefix = crypto.randomUUID();
+        await rasteriseAndUploadNotes(nBuffer, notesStoragePrefix);
+      } catch (err) {
+        console.error('[upload-extract] notes image upload failed:', err);
+        notesStoragePrefix = null;
+      }
     }
 
     // ---- 3) Heuristic parse ----
     let extracted = extractQuestionsFromText(fullText);
+    // OCR pipeline extracts richer per-question data (explanation,
+    // reference block) that pdf-parse+regex doesn't. Keyed by
+    // position in `extracted` so the insert step can pick it up.
+    const richExtras = new Map<
+      number,
+      { explanation?: string; reference?: string; pageNumber?: number }
+    >();
+    let extractionSource: 'regex' | 'ocr' = 'regex';
 
-    // ---- 4) LLM fallback (stub) ----
-    // If the heuristic parser returns nothing, THIS is where a
-    // paid LLM call would run — over the extracted text, not
-    // the raw PDF, so token cost is small. Wire an OpenAI/
-    // Anthropic call here when credentials are available.
-    // For now we return an empty list and let the professor
-    // add questions manually if the doc was too messy.
+    // ---- 4) OCR fallback ----
+    // Fires when pdf-parse yielded no matchable text — either the
+    // PDF is scanned (image-only) or the layout doesn't match the
+    // light regex. Rasterises with pdftocairo, OCRs each page,
+    // reparses with the tolerant MCQ parser in lib/ocr.
+    if (extracted.length === 0) {
+      const tempPath = path.join(
+        os.tmpdir(),
+        `medz-extract-${jobId}.pdf`
+      );
+      try {
+        await writeFile(tempPath, qBuffer);
+        const ocrResult = await processPdf(tempPath, {
+          cleanupImages: true,
+        });
+        if (ocrResult.questions.length > 0) {
+          extracted = ocrResult.questions.map((q, i) => {
+            const row: ExtractedQuestion = {
+              question: q.questionText,
+              choices: q.choices.map((c) => ({ id: c.id, text: c.text })),
+              correctAnswer: q.correctAnswer || undefined,
+              reference: q.reference?.fullText,
+            };
+            richExtras.set(i, {
+              explanation: q.explanation || undefined,
+              reference: q.reference?.fullText,
+              pageNumber: q.reference?.pageNumber
+                ? parseInt(q.reference.pageNumber, 10) || undefined
+                : undefined,
+            });
+            return row;
+          });
+          extractionSource = 'ocr';
+        }
+      } catch (err) {
+        console.error('[upload-extract] OCR fallback failed:', err);
+      } finally {
+        await unlink(tempPath).catch(() => {});
+      }
+    }
 
     // ---- 5) Reference annotation from notes ----
+    // annotateWithReferences preserves any reference already set,
+    // so OCR-extracted references win; notes lookup only fills
+    // gaps for questions the OCR didn't find a reference for.
     extracted = annotateWithReferences(extracted, notesIndex);
 
     if (extracted.length === 0) {
@@ -232,25 +323,36 @@ export async function POST(request: Request) {
 
     let nextBundleId = (maxRes.data?.[0]?.subject_bundle_id ?? 0) + 1;
 
-    const rows = extracted.map((q) => {
+    const rows = extracted.map((q, i) => {
       const correct =
         q.correctAnswer && q.choices.some((c) => c.id === q.correctAnswer)
           ? q.correctAnswer
           : q.choices[0].id;
+      const extras = richExtras.get(i);
+      // Resolve the source-notes page number. Priority:
+      //   1. OCR-parsed [Reference: … Page N …] from the questions PDF
+      //   2. sourcePage from annotateWithReferences (word-overlap match)
+      //   3. digits stripped from the reference string itself
+      const refPage =
+        extras?.pageNumber ??
+        q.sourcePage ??
+        parseRefPageFromString(q.reference);
       return {
         subject_id: subjectId,
         subject_bundle_id: nextBundleId++,
         question: q.question,
         choices: q.choices,
         correct_answer: correct,
-        explanation: '',
-        reference: q.reference ?? '',
+        explanation: extras?.explanation ?? '',
+        reference: q.reference ?? extras?.reference ?? '',
         topic: '',
         chapter_id: chapterId,
         professor_id: user.id,
         status: 'under_review',
         source: 'ai',
         difficulty: 'medium',
+        notes_storage_prefix: notesStoragePrefix,
+        reference_page: refPage,
       };
     });
 
@@ -293,6 +395,7 @@ export async function POST(request: Request) {
       insertedIds: (insertRes.data ?? []).map((r) => r.id),
       chapterId,
       subjectId,
+      extractionSource,
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Extraction failed';
@@ -303,4 +406,23 @@ export async function POST(request: Request) {
     });
     return NextResponse.json({ error: msg, jobId }, { status: 500 });
   }
+}
+
+// Pull the first integer that looks like a page number out of
+// free-form reference strings like "Notes, p. 37" or "Ch 5 p 91".
+function parseRefPageFromString(ref: string | undefined): number | null {
+  if (!ref) return null;
+  const m = ref.match(/[Pp](?:age)?\.?\s*(\d+)/);
+  return m ? parseInt(m[1], 10) : null;
+}
+
+// Under ~20 chars/page on average = pdf-parse found no real
+// text — the PDF is scanned (image-only), so we need OCR to
+// build a usable notes index.
+function looksScannedIndex(idx: {
+  pages: { text: string }[];
+}): boolean {
+  if (idx.pages.length === 0) return true;
+  const total = idx.pages.reduce((n, p) => n + p.text.length, 0);
+  return total / idx.pages.length < 20;
 }

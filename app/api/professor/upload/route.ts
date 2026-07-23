@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createRouteHandlerClient } from '@/lib/supabase-server';
 import { z } from 'zod';
 import { applyRateLimit } from '@/lib/apply-rate-limit';
 import { uploadLimiter } from '@/lib/rate-limit';
@@ -40,7 +40,7 @@ const UploadSchema = z
  * responsive even under burst load.
  */
 export async function POST(request: NextRequest) {
-  const supabase = createRouteHandlerClient<Database>({ cookies });
+  const supabase = await createRouteHandlerClient<Database>({ cookies });
 
   const {
     data: { user },
