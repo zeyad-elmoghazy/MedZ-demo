@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createRouteHandlerClient } from '@/lib/supabase-server';
 import { z } from 'zod';
 import type { Database } from '@/lib/supabase';
 import { redis, CACHE_KEYS } from '@/lib/redis';
@@ -45,7 +45,7 @@ async function invalidatePublished(subjectId: string) {
  * Query: ?status=&chapterId=&moduleCode=&subjectId=&limit=&offset=
  */
 export async function GET(request: Request) {
-  const supabase = createRouteHandlerClient<Database>({ cookies });
+  const supabase = await createRouteHandlerClient<Database>({ cookies });
 
   const {
     data: { user },
@@ -139,7 +139,7 @@ export async function GET(request: Request) {
  * so the next /api/student/stats read sees the new count.
  */
 export async function POST(request: Request) {
-  const supabase = createRouteHandlerClient<Database>({ cookies });
+  const supabase = await createRouteHandlerClient<Database>({ cookies });
 
   const {
     data: { user },

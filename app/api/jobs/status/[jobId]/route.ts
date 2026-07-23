@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createRouteHandlerClient } from '@/lib/supabase-server';
 import type { Database } from '@/lib/supabase';
 
 export const runtime = 'nodejs';
@@ -33,11 +33,9 @@ type JobRow = {
  *   We still check the role here so a non-professor session gets
  *   a clean 403 instead of an empty result.
  */
-export async function GET(
-  _request: NextRequest,
-  { params }: { params: { jobId: string } }
-) {
-  const supabase = createRouteHandlerClient<Database>({ cookies });
+export async function GET(_request: NextRequest, props: { params: Promise<{ jobId: string }> }) {
+  const params = await props.params;
+  const supabase = await createRouteHandlerClient<Database>({ cookies });
 
   const {
     data: { user },

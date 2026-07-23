@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createRouteHandlerClient } from '@/lib/supabase-server';
 import { withCache } from '@/lib/cache';
 import { CACHE_KEYS, TTL } from '@/lib/redis';
 import { histologyQuestions, type HistologyQuestion, type Choice } from '@/data/histology-questions';
@@ -35,11 +35,9 @@ export const dynamic = 'force-dynamic';
  *   leak exam content to scrapers. Per-student answer history is
  *   gated separately by /api/student/stats.
  */
-export async function GET(
-  _request: NextRequest,
-  { params }: { params: { subjectId: string } }
-) {
-  const supabase = createRouteHandlerClient<Database>({ cookies });
+export async function GET(_request: NextRequest, props: { params: Promise<{ subjectId: string }> }) {
+  const params = await props.params;
+  const supabase = await createRouteHandlerClient<Database>({ cookies });
   const {
     data: { user },
   } = await supabase.auth.getUser();
@@ -76,6 +74,8 @@ type QuestionRow = {
   choice_rationales: Record<string, string> | null;
   reference: string;
   topic: string;
+  notes_storage_prefix: string | null;
+  reference_page: number | null;
 };
 
 async function fetchQuestionsFromDB(subjectId: string): Promise<HistologyQuestion[]> {
@@ -83,7 +83,7 @@ async function fetchQuestionsFromDB(subjectId: string): Promise<HistologyQuestio
     return subjectId === 'histology' ? histologyQuestions : [];
   }
 
-  const supabase = createRouteHandlerClient<Database>({ cookies });
+  const supabase = await createRouteHandlerClient<Database>({ cookies });
 
   // auth-helpers-nextjs@0.8 collapses the Database generic to
   // `never` for chained builders; the shape below is the exact
@@ -104,12 +104,14 @@ async function fetchQuestionsFromDB(subjectId: string): Promise<HistologyQuestio
   const { data, error } = await client
     .from('questions')
     .select(
-      'subject_bundle_id, question, choices, correct_answer, explanation, choice_rationales, reference, topic'
+      'subject_bundle_id, question, choices, correct_answer, explanation, choice_rationales, reference, topic, notes_storage_prefix, reference_page'
     )
     .eq('subject_id', subjectId)
     .order('subject_bundle_id', { ascending: true });
 
   if (error) throw new Error(error.message);
+
+  const { notesPageImageUrl } = await import('@/lib/ocr/notes-upload');
 
   return (data ?? []).map(
     (r): HistologyQuestion => ({
@@ -121,6 +123,10 @@ async function fetchQuestionsFromDB(subjectId: string): Promise<HistologyQuestio
       choiceRationales: r.choice_rationales ?? undefined,
       reference: r.reference,
       topic: r.topic,
+      referenceImageUrl:
+        r.notes_storage_prefix && r.reference_page
+          ? notesPageImageUrl(r.notes_storage_prefix, r.reference_page)
+          : null,
     })
   );
 }

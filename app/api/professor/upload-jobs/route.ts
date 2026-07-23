@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createRouteHandlerClient } from '@/lib/supabase-server';
 import { z } from 'zod';
 import type { Database } from '@/lib/supabase';
 
@@ -20,7 +20,7 @@ const CreateJobSchema = z.object({
  * List the calling professor's recent upload jobs.
  */
 export async function GET(request: Request) {
-  const supabase = createRouteHandlerClient<Database>({ cookies });
+  const supabase = await createRouteHandlerClient<Database>({ cookies });
   const {
     data: { user },
   } = await supabase.auth.getUser();
@@ -69,7 +69,7 @@ export async function GET(request: Request) {
  * that the design's status tracker reads.
  */
 export async function POST(request: Request) {
-  const supabase = createRouteHandlerClient<Database>({ cookies });
+  const supabase = await createRouteHandlerClient<Database>({ cookies });
   const {
     data: { user },
   } = await supabase.auth.getUser();

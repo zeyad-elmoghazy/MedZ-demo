@@ -35,9 +35,9 @@ CREATE POLICY "Profiles are updatable by owner"
 
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import {
-  createClientComponentClient,
-  createMiddlewareClient,
-} from '@supabase/auth-helpers-nextjs';
+  createBrowserClient as createBrowserSSR,
+  createServerClient as createServerSSR,
+} from '@supabase/ssr';
 import type { NextRequest, NextResponse } from 'next/server';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? '';
@@ -66,28 +66,43 @@ export const supabase: SupabaseClient = createClient(supabaseUrl, supabaseAnonKe
   },
 });
 
-// Cache the browser client across React renders. `createClientComponentClient`
-// creates a fresh Supabase client object every call, which invalidates
-// referential-equality checks in `useEffect` deps and can cause repeated
-// auth-state subscriptions. One process-wide instance is fine — the client
-// reads its session from cookies on demand, so there is no state to reset.
-let browserClient: ReturnType<typeof createClientComponentClient<Database>> | null = null;
-export const createBrowserClient = () => {
+// Cache the browser client across React renders. Minting a fresh client
+// every call invalidates referential-equality checks in `useEffect` deps
+// and doubles up auth-state subscriptions. One process-wide instance is
+// fine — it reads its session from cookies on demand, so there is no
+// state to reset.
+type BrowserClient = ReturnType<typeof createBrowserSSR<Database>>;
+let browserClient: BrowserClient | null = null;
+export const createBrowserClient = (): BrowserClient => {
   if (typeof window === 'undefined') {
-    // Server render / RSC — always mint a fresh client (do not cache
-    // in module scope because there is no per-request isolation).
-    return createClientComponentClient<Database>();
+    return createBrowserSSR<Database>(supabaseUrl, supabaseAnonKey);
   }
   if (!browserClient) {
-    browserClient = createClientComponentClient<Database>();
+    browserClient = createBrowserSSR<Database>(supabaseUrl, supabaseAnonKey);
   }
   return browserClient;
 };
 
+// `createRouteHandlerClient` lives in `./supabase-server` — it depends
+// on `next/headers`, which Next 16 refuses to bundle into client-facing
+// modules. Import server-only helpers from that file directly:
+//     import { createRouteHandlerClient } from '@/lib/supabase-server';
+
 export const createMiddlewareSupabase = (
   req: NextRequest,
-  res: NextResponse
-) => createMiddlewareClient<Database>({ req, res });
+  res: NextResponse,
+): SupabaseClient<Database> =>
+  createServerSSR<Database>(supabaseUrl, supabaseAnonKey, {
+    cookies: {
+      getAll: () => req.cookies.getAll(),
+      setAll: (list) => {
+        list.forEach(({ name, value, options }) => {
+          req.cookies.set(name, value);
+          res.cookies.set(name, value, options);
+        });
+      },
+    },
+  });
 
 export type { UserRole } from '@/lib/demo-profile';
 import type { UserRole } from '@/lib/demo-profile';

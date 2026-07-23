@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createRouteHandlerClient } from '@/lib/supabase-server';
 import { createClient } from '@supabase/supabase-js';
 import type { Database, UserRole } from '@/lib/supabase';
 import {
@@ -37,7 +37,7 @@ export const dynamic = 'force-dynamic';
  * leakage possible.
  */
 export async function GET() {
-  const supabase = createRouteHandlerClient<Database>({ cookies });
+  const supabase = await createRouteHandlerClient<Database>({ cookies });
 
   const {
     data: { user },
