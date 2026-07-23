@@ -205,7 +205,7 @@ function HistologyResultsInner() {
         <FadeUp className="mt-8">
           <div className="flex flex-col gap-3 sm:flex-row">
             <Link
-              href="/student/analytics"
+              href="/student/dashboard?view=analytics"
               className="group inline-flex h-12 flex-1 items-center justify-center gap-2 rounded-xl text-sm font-semibold text-white transition"
               style={{
                 backgroundColor: '#7C3AED',
@@ -365,7 +365,7 @@ function Header() {
           </span>
         </Link>
         <Link
-          href="/student/analytics"
+          href="/student/dashboard?view=analytics"
           className="text-xs text-text-muted hover:text-white"
         >
           Analytics
