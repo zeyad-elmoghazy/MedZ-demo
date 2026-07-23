@@ -72,12 +72,15 @@ export default function SubjectModulesPage() {
   const totalModules = HISTOLOGY_ACADEMIC_YEARS.reduce((n, y) => n + y.modules.length, 0);
   const totalYears = HISTOLOGY_ACADEMIC_YEARS.length;
 
-  // Live per-module published counts from the DB. Overlays the
-  // (zeroed) static catalog. Empty until fetch resolves.
+  // Live per-module and per-chapter published counts. `liveCounts`
+  // is per-module total (module.code → sum); `chapterCounts` is
+  // per-chapter (module.code:chapter.slug → count) so a chapter can
+  // unlock the instant the professor publishes one question in it.
   const [liveCounts, setLiveCounts] = useState<Map<string, number>>(new Map());
+  const [chapterCounts, setChapterCounts] = useState<Map<string, number>>(new Map());
   useEffect(() => {
     let cancelled = false;
-    (async () => {
+    async function load() {
       try {
         const res = await fetch('/api/professor/modules', {
           credentials: 'include',
@@ -87,24 +90,36 @@ export default function SubjectModulesPage() {
         const body = (await res.json()) as {
           modules?: Array<{
             code: string;
-            chapters?: Array<{ published_count?: number }>;
+            chapters?: Array<{ slug: string; published_count?: number }>;
           }>;
         };
         if (cancelled) return;
-        const map = new Map<string, number>();
+        const mods = new Map<string, number>();
+        const chs = new Map<string, number>();
         for (const m of body.modules ?? []) {
-          const sum = (m.chapters ?? []).reduce(
-            (a, c) => a + (Number(c.published_count) || 0),
-            0
-          );
-          map.set(m.code, sum);
+          let sum = 0;
+          for (const c of m.chapters ?? []) {
+            const n = Number(c.published_count) || 0;
+            chs.set(`${m.code}:${c.slug}`, n);
+            sum += n;
+          }
+          mods.set(m.code, sum);
         }
-        setLiveCounts(map);
+        setLiveCounts(mods);
+        setChapterCounts(chs);
       } catch {
         /* stay zero */
       }
-    })();
-    return () => { cancelled = true; };
+    }
+    load();
+    const onFocus = () => load();
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onFocus);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onFocus);
+    };
   }, []);
 
   return (
@@ -161,7 +176,7 @@ export default function SubjectModulesPage() {
                   boxShadow: '0 0 16px rgba(124,58,237,0.5)',
                 }}
               >
-                ✦ Exclusive Module
+                Exclusive Module
               </div>
               <h1 style={{ margin: '12px 0 0', fontSize: 38, fontWeight: 900, letterSpacing: '-0.03em', color: '#F8FAFC' }}>
                 {subject.name}
@@ -194,7 +209,9 @@ export default function SubjectModulesPage() {
                   <div style={{ fontSize: 10, color: '#94A3B8' }}>Modules</div>
                 </div>
                 <div>
-                  <div style={{ fontSize: 22, fontWeight: 800, color: '#8B5CF6' }}>{subject.qsLabel}</div>
+                  <div style={{ fontSize: 22, fontWeight: 800, color: '#8B5CF6' }}>
+                    {Array.from(liveCounts.values()).reduce((a, n) => a + n, 0)}
+                  </div>
                   <div style={{ fontSize: 10, color: '#94A3B8' }}>Questions</div>
                 </div>
                 <div>
@@ -256,6 +273,7 @@ export default function SubjectModulesPage() {
                       prefix={subject.prefix}
                       module={m}
                       liveQs={liveCounts.get(m.code)}
+                      chapterCounts={chapterCounts}
                     />
                   ))}
                 </div>
@@ -273,24 +291,26 @@ function ModuleCard({
   prefix,
   module: m,
   liveQs,
+  chapterCounts,
 }: {
   subjectId: string;
   prefix: string;
   module: Module;
   liveQs?: number;
+  chapterCounts: Map<string, number>;
 }) {
-  // Live progress values — used only to decide whether to show
-  // completion tick marks in the preview list. Fine to be
-  // client-only; SSR renders the design defaults.
   const progress = useModuleProgress(
     subjectId,
     m.code,
     useMemo(() => m.chapters.map((c) => ({ id: c.id, defaultProgress: c.defaultProgress })), [m]),
   );
 
-  // Locked (unpublished) chapters don't count toward completion —
-  // otherwise a module with no questions could read as "100% done".
-  const publishedChapters = m.chapters.filter((c) => c.published);
+  // A chapter is unlocked if the static catalog says so OR the live
+  // published_count is > 0 (professor just published something).
+  const isUnlocked = (c: { id: string; published: boolean }) =>
+    c.published || (chapterCounts.get(`${m.code}:${c.id}`) ?? 0) > 0;
+
+  const publishedChapters = m.chapters.filter(isUnlocked);
   const doneCount = publishedChapters.filter((c) => (progress[c.id] ?? c.defaultProgress) === 100).length;
   const avgProgress = publishedChapters.length === 0
     ? 0
@@ -389,7 +409,7 @@ function ModuleCard({
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
           {m.chapters.map((c) => {
-            const locked = !c.published;
+            const locked = !isUnlocked(c);
             const done = !locked && (progress[c.id] ?? c.defaultProgress) === 100;
             return (
               <div
@@ -404,32 +424,27 @@ function ModuleCard({
                   color: locked ? '#64748B' : done ? '#94A3B8' : '#CBD5E1',
                 }}
               >
-                {locked ? (
+                <span
+                  style={{
+                    width: 6,
+                    height: 6,
+                    flex: 'none',
+                    borderRadius: '50%',
+                    background: locked ? '#334155' : done ? '#10B981' : '#8B5CF6',
+                  }}
+                />
+                {locked && (
                   <span
-                    aria-hidden
                     style={{
-                      width: 10,
-                      height: 10,
-                      flex: 'none',
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
                       fontSize: 9,
+                      fontWeight: 700,
+                      letterSpacing: '0.08em',
                       color: '#64748B',
+                      textTransform: 'uppercase',
                     }}
                   >
-                    🔒
+                    Locked
                   </span>
-                ) : (
-                  <span
-                    style={{
-                      width: 6,
-                      height: 6,
-                      flex: 'none',
-                      borderRadius: '50%',
-                      background: done ? '#10B981' : '#8B5CF6',
-                    }}
-                  />
                 )}
                 <span style={{ textDecoration: done ? 'line-through' : 'none' }}>{c.name}</span>
               </div>

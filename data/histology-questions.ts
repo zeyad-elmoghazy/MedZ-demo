@@ -12,6 +12,10 @@ export type HistologyQuestion = {
   choiceRationales?: Record<string, string>;
   reference: string;
   topic: string;
+  // Rendered page image of the source notes for this question,
+  // populated when the professor uploaded a notes PDF alongside
+  // the questions PDF. Null for legacy rows and demo data.
+  referenceImageUrl?: string | null;
 };
 
 export const histologyQuestions: HistologyQuestion[] = [
@@ -35,6 +39,7 @@ export const histologyQuestions: HistologyQuestion[] = [
     },
     reference:
       "Dr. Ahmed Zahra's Notes, Page 37 — The Bulbo-Urethral (Cowper's) Glands.",
+    referenceImageUrl: '/references/q-01.jpg',
     topic: 'Male reproductive system',
   },
   {
@@ -57,6 +62,7 @@ export const histologyQuestions: HistologyQuestion[] = [
     },
     reference:
       "Dr. Ahmed Zahra's Notes, Page 47 — Mature Graafian (Tertiary) Follicles · Corona Radiata, Theca Interna & Externa.",
+    referenceImageUrl: '/references/q-02.jpg',
     topic: 'Female reproductive system',
   },
   {
@@ -79,6 +85,7 @@ export const histologyQuestions: HistologyQuestion[] = [
     },
     reference:
       "Dr. Ahmed Zahra's Notes, Page 7 — Neurohypophysis · Pars Nervosa Structure.",
+    referenceImageUrl: '/references/q-03.jpg',
     topic: 'Endocrine — Pituitary',
   },
   {
@@ -101,6 +108,7 @@ export const histologyQuestions: HistologyQuestion[] = [
     },
     reference:
       "Dr. Ahmed Zahra's Notes, Page 17 — Pineal Body (Epiphysis Cerebri) · Brain Sand & Pinealocytes.",
+    referenceImageUrl: '/references/q-04.jpg',
     topic: 'Endocrine — Pineal',
   },
   {
@@ -123,6 +131,7 @@ export const histologyQuestions: HistologyQuestion[] = [
     },
     reference:
       "Dr. Ahmed Zahra's Notes, Page 61 — Inner Cytotrophoblast vs. Outer Syncytiotrophoblast table.",
+    referenceImageUrl: '/references/q-05.jpg',
     topic: 'Female reproductive — Placenta',
   },
   {
@@ -145,6 +154,7 @@ export const histologyQuestions: HistologyQuestion[] = [
     },
     reference:
       "Dr. Ahmed Zahra's Notes, Page 28–29 — B. Sertoli Cells · LM features & Lysosomes function.",
+    referenceImageUrl: '/references/q-06.jpg',
     topic: 'Male reproductive — Testis',
   },
   {
@@ -167,6 +177,7 @@ export const histologyQuestions: HistologyQuestion[] = [
     },
     reference:
       "Dr. Ahmed Zahra's Notes, Page 10 — Cortex · Zona Fasciculata (Spongiocytes); Page 4 — Acidophils (Mammotrophs).",
+    referenceImageUrl: '/references/q-07.jpg',
     topic: 'Endocrine — Adrenal cortex',
   },
   {
@@ -189,6 +200,7 @@ export const histologyQuestions: HistologyQuestion[] = [
     },
     reference:
       "Dr. Ahmed Zahra's Notes, Page 63 — Female Mammary Gland · Resting state of Breast table.",
+    referenceImageUrl: '/references/q-08.jpg',
     topic: 'Female reproductive — Mammary gland',
   },
   {
@@ -211,6 +223,7 @@ export const histologyQuestions: HistologyQuestion[] = [
     },
     reference:
       "Dr. Ahmed Zahra's Notes, Page 10 — Cortex · Zona Fasciculata, Glomerulosa & Reticularis.",
+    referenceImageUrl: '/references/q-09.jpg',
     topic: 'Endocrine — Adrenal cortex',
   },
   {
@@ -233,6 +246,7 @@ export const histologyQuestions: HistologyQuestion[] = [
     },
     reference:
       "Dr. Ahmed Zahra's Notes, Page 38 — The Penis; Page 39 — Erectile Tissues.",
+    referenceImageUrl: '/references/q-10.jpg',
     topic: 'Male reproductive — Penis',
   },
   {
@@ -255,6 +269,7 @@ export const histologyQuestions: HistologyQuestion[] = [
     },
     reference:
       "Dr. Ahmed Zahra's Notes, Page 36 — The adult prostatic parenchyma · 3 zones.",
+    referenceImageUrl: '/references/q-11.jpg',
     topic: 'Male reproductive — Prostate',
   },
 ];

@@ -14,26 +14,22 @@ import {
   type Profile,
 } from '@/lib/supabase';
 
-// =============================================================
-// Shared navbar for student subpages under /student/subjects/*.
-// The dashboard and subjects catalog have their own inline
-// navbars (kept as-is to avoid touching working pages); this one
-// serves the newer Modules and Chapters pages so we don't
-// duplicate the ~150-line block twice more.
-// =============================================================
+// Single source of truth for the student top bar. Every /student
+// page renders this so the header stays identical.
 
 type NavLink = { label: string; href?: string; active?: boolean; toast?: string };
 
 const DEFAULT_LINKS: NavLink[] = [
-  { label: 'Home',        href: '/student/dashboard' },
-  { label: 'Subjects',    href: '/student/subjects' },
-  { label: 'Questions',   href: '/student/quiz/histology' },
-  { label: 'AI Tutor',    toast: 'Coming soon.' },
+  { label: 'Home',         href: '/student/dashboard' },
+  { label: 'Subjects',     href: '/student/subjects' },
+  { label: 'Custom Exam',  href: '/student/exam' },
+  { label: 'Post-Lecture', href: '/student/challenges' },
+  { label: 'Flashcards',   toast: 'Coming soon.' },
+  { label: 'AI Tutor',     toast: 'Coming soon.' },
   { label: 'Leaderboard' },
-  { label: 'Pricing',     toast: 'Free for now.' },
 ];
 
-export function StudentNavbar({ activeLabel }: { activeLabel: NavLink['label'] }) {
+export function StudentNavbar({ activeLabel }: { activeLabel?: NavLink['label'] }) {
   const router = useRouter();
   const supabase = createBrowserClient();
   const { message, showToast } = useNavToast();
@@ -41,8 +37,6 @@ export function StudentNavbar({ activeLabel }: { activeLabel: NavLink['label'] }
   const [displayName, setDisplayName] = useState('');
   const [signingOut, setSigningOut] = useState(false);
 
-  // Mirror the dashboard/subjects pattern for the user pill so
-  // students see their name across pages even in demo mode.
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -80,8 +74,6 @@ export function StudentNavbar({ activeLabel }: { activeLabel: NavLink['label'] }
   const links: NavLink[] = DEFAULT_LINKS.map((l) => ({
     ...l,
     active: l.label === activeLabel,
-    // If the active page is the "Subjects" link, render it as a static
-    // span (not a Link) so the nav doesn't self-navigate.
     href: l.label === activeLabel ? undefined : l.href,
   }));
 
@@ -157,7 +149,7 @@ export function StudentNavbar({ activeLabel }: { activeLabel: NavLink['label'] }
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
           <Link
-            href="/student/dashboard"
+            href="/student/dashboard?view=analytics"
             style={{
               display: 'inline-flex',
               alignItems: 'center',
@@ -172,7 +164,7 @@ export function StudentNavbar({ activeLabel }: { activeLabel: NavLink['label'] }
               textDecoration: 'none',
             }}
           >
-            📊 My Progress
+            My Progress
           </Link>
 
           <button
@@ -194,7 +186,8 @@ export function StudentNavbar({ activeLabel }: { activeLabel: NavLink['label'] }
             <Moon style={{ width: 15, height: 15 }} />
           </button>
 
-          <span
+          <Link
+            href="/student/profile"
             style={{
               display: 'inline-flex',
               alignItems: 'center',
@@ -202,6 +195,7 @@ export function StudentNavbar({ activeLabel }: { activeLabel: NavLink['label'] }
               fontSize: 13.5,
               fontWeight: 600,
               color: '#CBD5E1',
+              textDecoration: 'none',
             }}
           >
             <span
@@ -220,7 +214,7 @@ export function StudentNavbar({ activeLabel }: { activeLabel: NavLink['label'] }
               {initials || 'ME'}
             </span>
             {displayName || 'Guest'}
-          </span>
+          </Link>
 
           <button
             type="button"

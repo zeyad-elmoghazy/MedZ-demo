@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState, type CSSProperties } from 'react';
 import Link from 'next/link';
 import { notFound, useParams, useRouter } from 'next/navigation';
 import { motion } from 'framer-motion';
-import { RotateCcw } from 'lucide-react';
+import { RotateCcw, Lock } from 'lucide-react';
 import { StudentNavbar } from '@/components/student/StudentNavbar';
 import {
   HISTOLOGY_SUBJECT_PREFIX,
@@ -74,7 +74,7 @@ export default function ModuleChaptersPage() {
   const [chapterLive, setChapterLive] = useState<Map<string, number>>(new Map());
   useEffect(() => {
     let cancelled = false;
-    (async () => {
+    async function load() {
       try {
         const res = await fetch('/api/professor/modules', {
           credentials: 'include',
@@ -102,11 +102,24 @@ export default function ModuleChaptersPage() {
       } catch {
         /* stay at 0 */
       }
-    })();
-    return () => { cancelled = true; };
+    }
+    load();
+    // Re-fetch when the tab regains focus so a professor publish in
+    // another tab shows up here without a full reload.
+    const onFocus = () => load();
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onFocus);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onFocus);
+    };
   }, [m.code]);
 
-  const publishedChapters = m.chapters.filter((c) => c.published);
+  // A chapter unlocks the moment its live published_count exceeds 0,
+  // regardless of the static catalog flag.
+  const isUnlocked = (c: Chapter) => c.published || (chapterLive.get(c.id) ?? 0) > 0;
+  const publishedChapters = m.chapters.filter(isUnlocked);
   const publishedCount = publishedChapters.length;
   const doneCount = publishedChapters.filter((c) => (progress[c.id] ?? c.defaultProgress) === 100).length;
   const avgProgress = publishedCount === 0
@@ -192,7 +205,7 @@ export default function ModuleChaptersPage() {
                     borderRadius: 7,
                   }}
                 >
-                  🔒 Awaiting Content
+                  <Lock style={{ width: 11, height: 11 }} /> Awaiting Content
                 </div>
               )}
             </div>
@@ -240,6 +253,7 @@ export default function ModuleChaptersPage() {
                 chapter={c}
                 index={i}
                 quizHref={subject.quizHref}
+                publishedCount={chapterLive.get(c.id) ?? 0}
               />
             ))}
           </div>
@@ -261,18 +275,22 @@ function ChapterRow({
   chapter: c,
   index,
   quizHref,
+  publishedCount,
 }: {
   subjectId: string;
   moduleCode: string;
   chapter: Chapter;
   index: number;
   quizHref: string;
+  publishedCount: number;
 }) {
   const router = useRouter();
   const prog = useChapterProgress(subjectId, moduleCode, c.id, c.defaultProgress);
   const { reset } = useChapterProgressActions(subjectId, moduleCode);
 
-  const locked = !c.published;
+  // A live published_count > 0 unlocks the chapter even if the static
+  // catalog still has it as unpublished (professor just published).
+  const locked = !c.published && publishedCount === 0;
   const done = !locked && prog === 100;
   const started = !locked && prog > 0 && prog < 100;
 
@@ -336,7 +354,7 @@ function ChapterRow({
             color: '#64748B',
           }}
         >
-          🔒
+          <Lock style={{ width: 16, height: 16 }} />
         </div>
 
         <div style={{ flex: 1, minWidth: 0 }}>

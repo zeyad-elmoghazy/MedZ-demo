@@ -125,14 +125,11 @@ export default function StudentSubjectsPage() {
     return () => { cancelled = true; };
   }, [supabase]);
 
-  // Live counts. Every real question a professor publishes
-  // arrives here on the next request (subject to the /api/
-  // student/stats 60 s Cache-Control window; we bypass with
-  // cache: 'no-store' so a professor publish shows on the next
-  // page load without waiting).
+  // Live counts. Re-fetches on tab focus so a professor publishing
+  // in another tab reflects here immediately.
   useEffect(() => {
     let cancelled = false;
-    (async () => {
+    async function load() {
       if (isDemoMode()) return;
       try {
         const res = await fetch('/api/student/stats', {
@@ -152,8 +149,16 @@ export default function StudentSubjectsPage() {
       } catch {
         /* silent — the catalog will show its default label */
       }
-    })();
-    return () => { cancelled = true; };
+    }
+    load();
+    const onFocus = () => load();
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onFocus);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onFocus);
+    };
   }, []);
 
   async function handleLogout() {
@@ -540,7 +545,7 @@ function SubjectCard({
           }}
         >
           <span style={{ fontWeight: 700, color: '#C4B5FD' }}>
-            {typeof liveCount === 'number' ? liveCount : s.qs}
+            {typeof liveCount === 'number' ? liveCount : s.available ? 0 : '—'}
           </span>
           <span>questions</span>
         </div>
@@ -580,7 +585,7 @@ function SubjectCard({
                 cursor: 'not-allowed',
               }}
             >
-              🔒 Coming Soon
+              Coming Soon
             </div>
           )}
         </div>
@@ -595,12 +600,13 @@ function SubjectCard({
 // =============================================================
 
 const NAV_LINKS: { label: string; href?: string; active?: boolean; toast?: string }[] = [
-  { label: 'Home',        href: '/student/dashboard' },
-  { label: 'Subjects',    active: true },
-  { label: 'Questions',   href: '/student/quiz/histology' },
-  { label: 'AI Tutor',    toast: 'Coming soon.' },
+  { label: 'Home',           href: '/student/dashboard' },
+  { label: 'Subjects',       active: true },
+  { label: 'Custom Exam',    href: '/student/exam' },
+  { label: 'Post-Lecture',   href: '/student/challenges' },
+  { label: 'Flashcards',     toast: 'Coming soon.' },
+  { label: 'AI Tutor',       toast: 'Coming soon.' },
   { label: 'Leaderboard' },
-  { label: 'Pricing',     toast: 'Free for now.' },
 ];
 
 function Navbar({
@@ -703,7 +709,7 @@ function Navbar({
             textDecoration: 'none',
           }}
         >
-          📊 My Progress
+          My Progress
         </Link>
 
         <button
@@ -725,7 +731,8 @@ function Navbar({
           <Moon style={{ width: 15, height: 15 }} />
         </button>
 
-        <span
+        <Link
+          href="/student/profile"
           style={{
             display: 'inline-flex',
             alignItems: 'center',
@@ -733,6 +740,7 @@ function Navbar({
             fontSize: 13.5,
             fontWeight: 600,
             color: '#CBD5E1',
+            textDecoration: 'none',
           }}
         >
           <span
@@ -751,7 +759,7 @@ function Navbar({
             {initials || 'ME'}
           </span>
           {userLabel || 'Guest'}
-        </span>
+        </Link>
 
         <button
           type="button"

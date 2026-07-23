@@ -419,6 +419,7 @@ export default function QuizEnginePage() {
         body: JSON.stringify({
           subjectId,
           answers: stringKeyedAnswers,
+          questionIds: questions.map((q) => q.id),
           startedAt,
         }),
       });

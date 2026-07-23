@@ -26,6 +26,10 @@ const SubmitBodySchema = z.object({
     .refine((o) => Object.keys(o).length > 0, {
       message: 'answers must contain at least one entry',
     }),
+  // Ids the client actually rendered in this session. When present,
+  // scoring is restricted to just these — so a challenge of 11
+  // questions returns "X / 11" even if the bank has more rows.
+  questionIds: z.array(z.number().int()).optional(),
   startedAt: z
     .string()
     .refine((s) => !Number.isNaN(new Date(s).getTime()), {
@@ -89,19 +93,26 @@ export async function POST(request: NextRequest) {
       { status: 400 }
     );
   }
-  const { subjectId, answers, startedAt } = parsed.data;
+  const { subjectId, answers, startedAt, questionIds } = parsed.data;
 
   // 4) Score server-side from the canonical bank (Supabase in
   // real mode, bundled TS module in demo mode). Answers keys must
   // match the ids we send from /api/questions/[subjectId], which
   // is why both endpoints share the subject_bundle_id namespace.
-  const questions = await getQuestionsForSubject(subjectId);
-  if (questions.length === 0) {
+  const allQuestions = await getQuestionsForSubject(subjectId);
+  if (allQuestions.length === 0) {
     return NextResponse.json(
       { error: `Subject "${subjectId}" has no published questions yet.` },
       { status: 400 }
     );
   }
+
+  // If the client told us which questions were in this session,
+  // score only those — the bank may hold more rows than the student
+  // actually saw (chapter filters, bundled challenges, etc.).
+  const questions = questionIds && questionIds.length > 0
+    ? allQuestions.filter((q) => questionIds.includes(q.id))
+    : allQuestions;
 
   const results = questions.map((q) => ({
     questionId: q.id,

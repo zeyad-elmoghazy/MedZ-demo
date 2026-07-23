@@ -1,9 +1,9 @@
 'use client';
 
-import { useEffect, useState, type CSSProperties } from 'react';
+import { Suspense, useEffect, useState, type CSSProperties } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { Loader2, LogOut, Moon } from 'lucide-react';
 import { MedZLogo } from '@/components/brand/MedZLogo';
 import {
@@ -46,25 +46,26 @@ const LOCKED: LockedSubject[] = [
   { name: 'Pharmacology', image: '/subjects/pharmacology.webp', gradientFrom: 'rgba(249,115,22,0.55)', gradientTo: 'rgba(15,23,42,0.15)' },
 ];
 
-// Feature-strip copy at the bottom of the home view. Product
-// benefits, not user metrics.
-const FEATURES = [
-  { icon: '🛡️', title: 'Doctor-Curated Content',  sub: 'Trusted by top medical educators' },
-  { icon: '🧠',  title: 'AI-Powered Explanations', sub: 'Understand every concept deeply'  },
-  { icon: '🖼️', title: 'Visual References',       sub: 'See it. Understand it. Remember it.' },
-  { icon: '🏆',  title: 'Track & Improve',         sub: 'Monitor your progress and rank up' },
-];
-
 // =============================================================
 // Page
 // =============================================================
 
 export default function StudentDashboardPage() {
+  return (
+    <Suspense fallback={null}>
+      <StudentDashboardInner />
+    </Suspense>
+  );
+}
+
+function StudentDashboardInner() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const supabase = createBrowserClient();
   const startSession = useQuizStore((s) => s.startSession);
 
-  const [view, setView] = useState<'home' | 'analytics'>('home');
+  const initialView = searchParams.get('view') === 'analytics' ? 'analytics' : 'home';
+  const [view, setView] = useState<'home' | 'analytics'>(initialView);
   const [firstName, setFirstName] = useState('');
   const [displayName, setDisplayName] = useState('');
   const [signingOut, setSigningOut] = useState(false);
@@ -213,12 +214,13 @@ export default function StudentDashboardPage() {
 // =============================================================
 
 const NAV_LINKS: { label: string; href?: string; active?: boolean; toast?: string }[] = [
-  { label: 'Home',        active: true },
-  { label: 'Subjects',    href: '/student/subjects' },
-  { label: 'Questions',   href: '/student/quiz/histology' },
-  { label: 'AI Tutor',    toast: 'Coming soon.' },
+  { label: 'Home',           active: true },
+  { label: 'Subjects',       href: '/student/subjects' },
+  { label: 'Custom Exam',    href: '/student/exam' },
+  { label: 'Post-Lecture',   href: '/student/challenges' },
+  { label: 'Flashcards',     toast: 'Coming soon.' },
+  { label: 'AI Tutor',       toast: 'Coming soon.' },
   { label: 'Leaderboard' },
-  { label: 'Pricing',     toast: 'Free for now.' },
 ];
 
 function Navbar({
@@ -325,7 +327,7 @@ function Navbar({
             border: 'none',
           }}
         >
-          {view === 'home' ? '📊 My Progress' : '← Home'}
+          {view === 'home' ? 'My Progress' : '← Home'}
         </button>
 
         <button
@@ -347,10 +349,9 @@ function Navbar({
           <Moon style={{ width: 15, height: 15 }} />
         </button>
 
-        {/* Design showed Log in / Sign up, but this is the authenticated
-            student dashboard — swap for user pill + Logout to stay
-            semantically correct without breaking the navbar rhythm. */}
-        <span
+        {/* Profile pill → /student/profile (profile & settings). */}
+        <Link
+          href="/student/profile"
           style={{
             display: 'inline-flex',
             alignItems: 'center',
@@ -358,6 +359,7 @@ function Navbar({
             fontSize: 13.5,
             fontWeight: 600,
             color: '#CBD5E1',
+            textDecoration: 'none',
           }}
         >
           <span
@@ -376,7 +378,7 @@ function Navbar({
             {initials || 'ME'}
           </span>
           {userLabel}
-        </span>
+        </Link>
 
         <button
           type="button"
@@ -593,11 +595,11 @@ function HomeView({
           <div style={{ display: 'flex', gap: 30, alignItems: 'center', margin: '30px 0 34px' }}>
             <StatMicro value="450+" label={<>High-Yield<br />Questions</>} big />
             <Divider />
-            <StatMicro icon="📝" label={<>Detailed<br />Explanations</>} />
+            <StatMicro label={<>Detailed<br />Explanations</>} />
             <Divider />
-            <StatMicro icon="🖼️" label={<>Visual<br />References</>} />
+            <StatMicro label={<>Visual<br />References</>} />
             <Divider />
-            <StatMicro icon="🎯" label={<>Exam<br />Focused</>} />
+            <StatMicro label={<>Exam<br />Focused</>} />
           </div>
 
           {/* CTAs */}
@@ -640,7 +642,7 @@ function HomeView({
                 cursor: 'pointer',
               }}
             >
-              📊 View My Analytics
+              View My Analytics
             </button>
           </div>
         </div>
@@ -715,7 +717,7 @@ function HomeView({
                   borderRadius: 8,
                 }}
               >
-                ✦ Exclusive Module
+                Exclusive Module
               </div>
             </div>
             <div style={{ marginTop: 'auto', paddingTop: 18, fontSize: 11.5, color: '#CBD5E1' }}>
@@ -733,45 +735,7 @@ function HomeView({
         </div>
       </section>
 
-      {/* ================= FEATURE STRIP ================= */}
-      <section
-        style={{
-          position: 'relative',
-          margin: '26px 44px 40px',
-          padding: '26px 30px',
-          background: 'rgba(255,255,255,0.02)',
-          border: '1px solid rgba(255,255,255,0.06)',
-          borderRadius: 16,
-          display: 'grid',
-          gridTemplateColumns: 'repeat(4,1fr)',
-          gap: 26,
-        }}
-      >
-        {FEATURES.map((f) => (
-          <div key={f.title} style={{ display: 'flex', gap: 13, alignItems: 'flex-start' }}>
-            <div
-              style={{
-                width: 38,
-                height: 38,
-                borderRadius: 11,
-                background: 'rgba(124,58,237,0.14)',
-                border: '1px solid rgba(139,92,246,0.3)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                fontSize: 17,
-                flex: 'none',
-              }}
-            >
-              {f.icon}
-            </div>
-            <div>
-              <div style={{ fontSize: 13, fontWeight: 700, color: '#F8FAFC' }}>{f.title}</div>
-              <div style={{ fontSize: 11, color: '#94A3B8', marginTop: 3, lineHeight: 1.4 }}>{f.sub}</div>
-            </div>
-          </div>
-        ))}
-      </section>
+      <div style={{ height: 40 }} />
     </>
   );
 }
@@ -791,8 +755,17 @@ function AnalyticsView({
   loading: boolean;
   onBackToSubjects: () => void;
 }) {
+  const router = useRouter();
+  const mistakeQuestionIds = useQuizStore((s) => s.mistakeQuestionIds);
+  const startMistakeSession = useQuizStore((s) => s.startMistakeSession);
   const empty = getEmptyStudentStats();
   const s = stats ?? empty;
+
+  function practiceMistakes() {
+    if (mistakeQuestionIds.length === 0) return;
+    startMistakeSession(mistakeQuestionIds);
+    router.push('/student/quiz/histology?mode=mistakes');
+  }
 
   // Compose KPI tiles from real per-student numbers. Formatting is
   // done here (not on the API) so the source-of-truth values on
@@ -873,6 +846,51 @@ function AnalyticsView({
           ← Back to Subjects
         </button>
       </div>
+
+      {/* Practice mistakes CTA — appears once the student has any
+          question in their mistakes pool. */}
+      {mistakeQuestionIds.length > 0 && (
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 16,
+            padding: '16px 20px',
+            background: 'linear-gradient(135deg, rgba(124,58,237,0.16), rgba(139,92,246,0.06))',
+            border: '1px solid rgba(139,92,246,0.45)',
+            borderRadius: 14,
+          }}
+        >
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 700, color: '#F8FAFC' }}>
+              You have {mistakeQuestionIds.length} question{mistakeQuestionIds.length === 1 ? '' : 's'} to review
+            </div>
+            <div style={{ fontSize: 12, color: '#94A3B8', marginTop: 3 }}>
+              Practice the ones you got wrong — spaced review sticks longest.
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={practiceMistakes}
+            style={{
+              fontSize: 13,
+              fontWeight: 700,
+              color: '#fff',
+              background: 'linear-gradient(135deg,#7C3AED,#8B5CF6)',
+              padding: '11px 18px',
+              borderRadius: 10,
+              boxShadow: '0 0 18px rgba(124,58,237,0.4)',
+              border: 'none',
+              cursor: 'pointer',
+              whiteSpace: 'nowrap',
+              fontFamily: 'inherit',
+            }}
+          >
+            Practice mistakes
+          </button>
+        </div>
+      )}
 
       {/* KPI grid */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 16 }}>
@@ -1213,7 +1231,7 @@ function LockedSubjectCard({ subject }: { subject: LockedSubject }) {
       <div style={{ marginTop: 13, flex: 1 }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
           <div style={{ fontSize: 15, fontWeight: 700, color: '#F8FAFC' }}>{subject.name}</div>
-          <span style={{ fontSize: 11, color: '#64748B' }}>🔒</span>
+          <span style={{ fontSize: 10, fontWeight: 700, color: '#64748B', letterSpacing: '0.06em' }}>LOCKED</span>
         </div>
         <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.04em', color: '#8B5CF6', marginTop: 3 }}>
           Coming Soon
