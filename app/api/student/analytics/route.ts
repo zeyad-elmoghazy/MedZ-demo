@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createClient } from '@supabase/supabase-js';
 import { withCache } from '@/lib/cache';
 import { CACHE_KEYS, TTL } from '@/lib/redis';
 import type { Database } from '@/lib/supabase';
@@ -36,12 +37,14 @@ export async function GET() {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
+  const service = serviceRoleClient();
+
   const analytics = await withCache(
     CACHE_KEYS.studentAnalytics(user.id),
     TTL.ANALYTICS,
     async () => {
       const result = await (
-        supabase as unknown as {
+        service as unknown as {
           from: (t: string) => {
             select: (c: string) => {
               eq: (col: string, val: unknown) => {
@@ -60,4 +63,17 @@ export async function GET() {
   );
 
   return NextResponse.json({ analytics });
+}
+
+function serviceRoleClient() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !serviceKey) {
+    throw new Error(
+      'NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set.'
+    );
+  }
+  return createClient<Database>(url, serviceKey, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
 }

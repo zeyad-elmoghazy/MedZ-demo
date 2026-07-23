@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createClient } from '@supabase/supabase-js';
 import type { Database, UserRole } from '@/lib/supabase';
 import {
   SUBJECTS_CONFIG,
@@ -45,6 +46,8 @@ export async function GET() {
   if (!user) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
+
+  const service = serviceRoleClient();
 
   const profileQuery = await supabase
     .from('profiles')
@@ -111,8 +114,10 @@ export async function GET() {
     modulesForCountsRes,
     chaptersForCountsRes,
   ] = await Promise.all([
-    // (b/c) per-subject aggregates — also feeds the overall totals
-    supabase
+    // (b/c) per-subject aggregates — also feeds the overall totals.
+    // Reads the matview via the service-role client because API access
+    // to the matview is revoked from anon/authenticated (advisor 0016).
+    service
       .from('student_subject_stats')
       .select(
         'subject_id, total_sessions, total_correct, total_answered, avg_accuracy, best_accuracy, last_attempted'
@@ -321,4 +326,17 @@ function formatMonDay(iso: string): string {
   const d = new Date(iso);
   // "Mon DD" — matches the design (e.g. "May 14", "Jun 11").
   return `${MONTHS[d.getMonth()]} ${d.getDate().toString().padStart(2, '0')}`;
+}
+
+function serviceRoleClient() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !serviceKey) {
+    throw new Error(
+      'NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set.'
+    );
+  }
+  return createClient<Database>(url, serviceKey, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
 }
